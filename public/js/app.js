@@ -330,6 +330,7 @@ function renderOrders() {
           <span class="order-card-id">ServiceID: ${o.serviceId || '—'}</span>
           <span class="status status-${o.status}">${formatStatus(o.status)}</span>
         </div>
+        ${o.failureReason ? `<div class="order-card-reason">${o.failureReason}</div>` : ''}
         ${o.pspReference ? `<div class="order-card-psp">PSP: ${o.pspReference}</div>` : ''}
         ${o.tenderReference ? `<div class="order-card-psp">Tender: ${o.tenderReference}</div>` : ''}
         <div class="order-card-items">${itemsSummary || 'No items'}</div>
@@ -337,7 +338,11 @@ function renderOrders() {
           <span class="order-card-amount">${cur} ${(o.amount || 0).toFixed(2)}</span>
           <span class="order-card-time">${time}</span>
         </div>
-        ${o.status === 'pending' ? `<button class="btn-check-order" onclick="queryOrderStatus('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Check Status</button>` : ''}
+        ${o.status === 'pending' ? `
+          <div class="order-card-actions">
+            <button class="btn-check-order" onclick="queryOrderStatus('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Check Status</button>
+            <button class="btn-cancel-order" onclick="cancelOrder('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Cancel</button>
+          </div>` : ''}
         ${canRefund ? `<button class="btn-refund" onclick="promptRefund('${o.id}')" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>↩ Refund</button>` : ''}
       </div>
     `;
@@ -634,6 +639,28 @@ async function queryOrderStatus(serviceId, btnEl) {
   } finally {
     btnEl.disabled = false;
     btnEl.textContent = 'Check Status';
+  }
+}
+
+// ====================== Cancel Order ======================
+async function cancelOrder(serviceId, btnEl) {
+  try {
+    btnEl.disabled = true;
+    btnEl.textContent = 'Cancelling...';
+
+    const res = await fetch('/api/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serviceId })
+    });
+    const data = await res.json();
+    showApiResponse(`Cancel [${serviceId}]`, data);
+    showToast('Cancel request sent', 'info');
+  } catch (err) {
+    showToast(`Cancel failed: ${err.message}`, 'error');
+  } finally {
+    btnEl.disabled = false;
+    btnEl.textContent = 'Cancel';
   }
 }
 

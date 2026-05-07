@@ -475,6 +475,13 @@ app.post('/api/webhook', (req, res) => {
         if (result === 'Success') order.status = 'paid';
         else if (errCond === 'Aborted' || errCond === 'Cancel') order.status = 'cancelled';
         else order.status = 'failed';
+        if (result !== 'Success') {
+          const additional = paymentResponse.Response?.AdditionalResponse || '';
+          let msg = '';
+          try { msg = new URLSearchParams(additional).get('message') || ''; } catch {}
+          if (!msg) msg = additional.match(/message=([^&]*)/)?.[1] || '';
+          order.failureReason = msg || errCond || 'Unknown error';
+        }
         order.response = body;
 
         const poiData = paymentResponse.POIData;

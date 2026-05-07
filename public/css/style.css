@@ -99,6 +99,11 @@ html, body {
 }
 .order-card-id { font-size: .72rem; color: rgba(255,255,255,.75); font-family: 'SF Mono', ui-monospace, monospace; }
 
+.order-card-reason {
+  font-size: .68rem;
+  color: #ff6b6b;
+  margin-bottom: 4px;
+}
 .order-card-psp {
   font-size: .68rem;
   color: #64d2ff;
@@ -146,26 +151,31 @@ html, body {
   cursor: not-allowed;
 }
 
-.btn-check-order {
-  display: block;
-  width: 100%;
+.order-card-actions {
+  display: flex;
+  gap: 6px;
   margin-top: 8px;
+}
+.btn-check-order, .btn-cancel-order {
+  flex: 1;
   padding: 7px 0;
   font-size: .75rem;
   font-weight: 500;
   text-align: center;
-  color: rgba(255,255,255,.6);
-  background: rgba(0,113,227,.15);
-  border: 1px solid rgba(0,113,227,.25);
   border-radius: 8px;
   cursor: pointer;
   transition: all .2s;
 }
-.btn-check-order:hover:not(:disabled) {
-  background: rgba(0,113,227,.25);
+.btn-check-order, .btn-cancel-order {
+  color: rgba(255,255,255,.7);
+  background: rgba(255,255,255,.12);
+  border: 1px solid rgba(255,255,255,.18);
+}
+.btn-check-order:hover:not(:disabled), .btn-cancel-order:hover:not(:disabled) {
+  background: rgba(255,255,255,.2);
   color: #fff;
 }
-.btn-check-order:disabled {
+.btn-check-order:disabled, .btn-cancel-order:disabled {
   opacity: .3;
   cursor: not-allowed;
 }
