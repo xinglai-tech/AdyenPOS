@@ -265,10 +265,26 @@ const EVENT_DISPLAY = {
   'CARD_DETAILS_PROVIDED': 'Card details entered',
 };
 
+let _currentTxnId = null;
+let _displayClearTimeout = null;
+
 function updateTerminalDisplay(data) {
   if (!state.isAsync) return;
   const { events } = data;
   if (!events || events.length === 0) return;
+
+  let isFinal = false;
+
+  for (const e of events) {
+    if (e.type !== 'event') continue;
+    if (e.event === 'TENDER_CREATED' && e.transactionId) {
+      _currentTxnId = e.transactionId;
+      clearTimeout(_displayClearTimeout);
+    }
+    if (e.event === 'TENDER_FINAL') {
+      isFinal = true;
+    }
+  }
 
   const lines = events.map(e => {
     if (e.type === 'event') {
@@ -281,9 +297,21 @@ function updateTerminalDisplay(data) {
     return e.text || '';
   }).filter(Boolean);
 
-  $terminalDisplay.innerHTML = lines.map(l =>
+  let html = '';
+  if (_currentTxnId) {
+    html += `<div class="terminal-display-txnid">${_currentTxnId}</div>`;
+  }
+  html += lines.map(l =>
     `<div class="terminal-display-line">${l}</div>`
   ).join('');
+  $terminalDisplay.innerHTML = html;
+
+  if (isFinal) {
+    _displayClearTimeout = setTimeout(() => {
+      _currentTxnId = null;
+      $terminalDisplay.innerHTML = '<span class="terminal-display-idle">Idle</span>';
+    }, 5000);
+  }
 }
 
 // ====================== Products ======================

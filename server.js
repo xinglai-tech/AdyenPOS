@@ -548,7 +548,8 @@ app.post('/api/display', (req, res) => {
         const params = new URLSearchParams(refId);
         const event = params.get('event') || params.get('Event');
         const result = params.get('Result') || params.get('result');
-        if (event) events.push({ type: 'event', event, result, refId });
+        const transactionId = params.get('TransactionID') || params.get('transactionID');
+        if (event) events.push({ type: 'event', event, result, transactionId, refId });
       }
       // Fallback: OutputText (some terminals may use this)
       const textItems = content.OutputText || [];

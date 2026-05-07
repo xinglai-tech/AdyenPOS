@@ -650,6 +650,13 @@ html, body {
   font-size: 1.1rem;
   color: rgba(0,0,0,.3);
 }
+.terminal-display-txnid {
+  font-size: .75rem;
+  color: rgba(0,0,0,.4);
+  font-family: monospace;
+  margin-bottom: 4px;
+  letter-spacing: .3px;
+}
 .terminal-display-line {
   font-size: 1.1rem;
   color: rgba(0,0,0,.8);
