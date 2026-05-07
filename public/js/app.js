@@ -470,10 +470,12 @@ async function recoverPendingOrders() {
       const result = statusResp?.Response?.Result;
 
       if (result === 'Failure' && statusResp?.Response?.ErrorCondition === 'InProgress') {
-        // Restore payment overlay so user can monitor or cancel
-        showOverlay(order.amount, state.config.currency || 'EUR');
-        state.pendingServiceId = order.serviceId;
-        $overlayMsg.textContent = `Recovering order ${order.serviceId}...`;
+        if (!state.isAsync) {
+          // Sync mode: restore overlay so user can monitor or cancel
+          showOverlay(order.amount, state.config.currency || 'EUR');
+          state.pendingServiceId = order.serviceId;
+          $overlayMsg.textContent = `Recovering order ${order.serviceId}...`;
+        }
         showToast(`Order ${order.serviceId} still in progress on terminal`, 'warning');
       } else if (result === 'Success' || result === 'Failure') {
         showToast(`Order ${order.serviceId} resolved`, 'success');
