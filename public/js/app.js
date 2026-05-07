@@ -222,9 +222,14 @@ function setupSSE() {
     }
   });
 
+  let _lastTerminalEvent = '';
   es.addEventListener('eventNotification', (e) => {
     const data = JSON.parse(e.data);
-    showToast(`Terminal event: ${data.EventToNotify || 'notification'}`, 'info');
+    const evt = data.EventToNotify || 'notification';
+    if (evt === _lastTerminalEvent) return;
+    _lastTerminalEvent = evt;
+    showToast(`Terminal event: ${evt}`, 'info');
+    setTimeout(() => { _lastTerminalEvent = ''; }, 10000);
   });
 
   es.addEventListener('displayNotification', (e) => {

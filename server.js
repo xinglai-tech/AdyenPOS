@@ -523,8 +523,39 @@ app.post('/api/webhook', (req, res) => {
   // Handle EventNotification
   const saleRequest = body?.SaleToPOIRequest;
   if (saleRequest?.EventNotification) {
-    console.log('[Webhook] EventNotification:', saleRequest.EventNotification);
-    broadcastSSE('eventNotification', saleRequest.EventNotification);
+    const eventData = saleRequest.EventNotification;
+    console.log('[Webhook] EventNotification:', eventData);
+
+    // Handle Reject (e.g. timeout) — mark matching order as failed
+    if (eventData.EventToNotify === 'Reject') {
+      const header = saleRequest.MessageHeader;
+      const details = eventData.EventDetails || '';
+      const message = new URLSearchParams(details).get('message') || details;
+
+      // Try to find the original serviceId from the RejectedMessage
+      let origServiceId = null;
+      if (eventData.RejectedMessage) {
+        try {
+          const decoded = JSON.parse(Buffer.from(eventData.RejectedMessage, 'base64').toString());
+          origServiceId = decoded?.SaleToPOIRequest?.MessageHeader?.ServiceID
+            || decoded?.SaleToPOIRequest?.TransactionStatusRequest?.MessageReference?.ServiceID;
+        } catch (e) { console.warn('[Webhook] Failed to decode RejectedMessage:', e.message); }
+      }
+
+      const matchId = origServiceId || header?.ServiceID;
+      if (matchId) {
+        const order = orders.find(o => o.serviceId === matchId && o.status === 'pending');
+        if (order) {
+          order.status = 'failed';
+          order.failureReason = message || 'Timed out waiting for terminal response';
+          order.response = body;
+          console.log(`[Webhook] Order ${order.id} marked failed (Reject): ${order.failureReason}`);
+          broadcastSSE('orderUpdate', order);
+        }
+      }
+    }
+
+    broadcastSSE('eventNotification', eventData);
   }
 
   res.status(200).json({ status: 'ok' });
