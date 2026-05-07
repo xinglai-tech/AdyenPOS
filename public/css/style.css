@@ -244,7 +244,6 @@ html, body {
 }
 #product-settings-row #product-section {
   padding: 0;
-  flex: 1;
   min-width: 0;
 }
 
@@ -584,7 +583,7 @@ html, body {
 
 /* ============ Product Section ============ */
 #product-section {
-  padding: 16px 24px 8px;
+  padding: 0;
 }
 .section-title { font-size: 1.05rem; font-weight: 700; margin-bottom: 14px; color: var(--text); letter-spacing: -.01em; }
 
@@ -634,19 +633,15 @@ html, body {
 
 /* ============ Terminal Display ============ */
 .terminal-display {
-  min-width: 180px;
-  background: var(--card);
-  border-radius: var(--radius);
-  padding: 20px;
+  min-width: 360px;
   display: flex;
   flex-direction: column;
-  margin-left: -8px;
 }
 .terminal-display-content {
   background: rgba(255,255,255,.92);
   border-radius: 8px;
   padding: 14px 16px;
-  min-height: 40px;
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 6px;
