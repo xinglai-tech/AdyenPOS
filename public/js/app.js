@@ -419,6 +419,7 @@ function renderOrders() {
         ${o.failureReason ? `<div class="order-card-reason">${o.failureReason}</div>` : ''}
         ${o.pspReference ? `<div class="order-card-psp">PSP: ${o.pspReference}</div>` : ''}
         ${o.tenderReference ? `<div class="order-card-psp">Tender: ${o.tenderReference}</div>` : ''}
+        ${o.poiTransactionId ? `<div class="order-card-psp">Tender reference: ${o.poiTransactionId.split('.')[0]}</div>` : ''}
         <div class="order-card-items">${itemsSummary || 'No items'}</div>
         <div class="order-card-footer">
           <span class="order-card-amount">${cur} ${(o.amount || 0).toFixed(2)}</span>
@@ -1006,7 +1007,13 @@ function bindEvents() {
   $toggleAsync.addEventListener('change', (e) => {
     state.isAsync = e.target.checked;
     localStorage.setItem('posAsyncMode', state.isAsync);
-    document.getElementById('terminal-display').style.display = state.isAsync ? '' : 'none';
+    const displayEl = document.getElementById('terminal-display');
+    displayEl.style.display = state.isAsync ? '' : 'none';
+    if (!state.isAsync) {
+      _currentTxnId = null;
+      clearTimeout(_displayClearTimeout);
+      $terminalDisplay.innerHTML = '<span class="terminal-display-idle">Idle</span>';
+    }
     showToast(state.isAsync ? 'Switched to Async mode' : 'Switched to Sync mode', 'info');
   });
 
