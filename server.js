@@ -49,8 +49,8 @@ app.post('/api/logout', (req, res) => {
 
 // --------------- Auth middleware ---------------
 app.use((req, res, next) => {
-  // Skip auth for webhook
-  if (req.path === '/api/webhook') return next();
+  // Skip auth for webhook and display notifications
+  if (req.path === '/api/webhook' || req.path === '/api/display') return next();
   // Skip auth for login page assets
   if (req.path === '/login.html') return next();
   // Skip auth for service worker and manifest (needed for PWA)
@@ -525,6 +525,45 @@ app.post('/api/webhook', (req, res) => {
   if (saleRequest?.EventNotification) {
     console.log('[Webhook] EventNotification:', saleRequest.EventNotification);
     broadcastSSE('eventNotification', saleRequest.EventNotification);
+  }
+
+  res.status(200).json({ status: 'ok' });
+});
+
+// --------------- Display Notification URL ---------------
+app.post('/api/display', (req, res) => {
+  const body = req.body;
+  console.log('[Display] Received:', JSON.stringify(body, null, 2));
+
+  const displayReq = body?.SaleToPOIRequest?.DisplayRequest;
+  if (displayReq) {
+    const outputs = displayReq.DisplayOutput || [];
+    const events = [];
+
+    for (const output of outputs) {
+      const content = output.OutputContent || {};
+      // Format: PredefinedContent with ReferenceID (e.g. "event=WAIT_FOR_PIN")
+      const refId = content.PredefinedContent?.ReferenceID || '';
+      if (refId) {
+        const params = new URLSearchParams(refId);
+        const event = params.get('event') || params.get('Event');
+        const result = params.get('Result') || params.get('result');
+        if (event) events.push({ type: 'event', event, result, refId });
+      }
+      // Fallback: OutputText (some terminals may use this)
+      const textItems = content.OutputText || [];
+      const text = textItems.map(t => t.Text).filter(Boolean).join(' ');
+      if (text) events.push({ type: 'text', text });
+    }
+
+    const device = outputs[0]?.Device || 'CashierDisplay';
+    const infoQualify = outputs[0]?.InfoQualify || 'Status';
+
+    broadcastSSE('displayNotification', {
+      events,
+      device,
+      infoQualify
+    });
   }
 
   res.status(200).json({ status: 'ok' });

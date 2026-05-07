@@ -140,6 +140,9 @@ const $btnToggleLog    = document.getElementById('btn-toggle-log');
 const $rightCol        = document.getElementById('right-col');
 const $btnLogout       = document.getElementById('btn-logout');
 
+// Terminal display
+const $terminalDisplay = document.getElementById('terminal-display-content');
+
 // Overlay
 const $overlay         = document.getElementById('payment-overlay');
 const $overlaySpinner  = document.getElementById('overlay-spinner');
@@ -223,9 +226,74 @@ function setupSSE() {
     showToast(`Terminal event: ${data.EventToNotify || 'notification'}`, 'info');
   });
 
+  es.addEventListener('displayNotification', (e) => {
+    const data = JSON.parse(e.data);
+    updateTerminalDisplay(data);
+  });
+
   es.onerror = () => {
     console.warn('SSE connection lost, reconnecting...');
   };
+}
+
+// ====================== Terminal Display ======================
+let _displayTimeout = null;
+
+const EVENT_DISPLAY = {
+  'TENDER_CREATED':       '🛒 Transaction started',
+  'CARD_INSERTED':        '💳 Card inserted',
+  'CARD_PRESENTED':       '💳 Card presented (contactless)',
+  'CARD_SWIPED':          '💳 Card swiped',
+  'WAIT_FOR_APP_SELECTION': '⏳ Waiting for app selection...',
+  'APPLICATION_SELECTED':  '✅ App selected',
+  'ASK_SIGNATURE':        '✍️ Signature required',
+  'CHECK_SIGNATURE':      '✍️ Please check signature',
+  'SIGNATURE_CHECKED':    '✅ Signature verified',
+  'WAIT_FOR_PIN':         '🔢 Waiting for PIN...',
+  'PIN_ENTERED':          '✅ PIN entered',
+  'PRINT_RECEIPT':        '🖨️ Printing receipt...',
+  'RECEIPT_PRINTED':      '✅ Receipt printed',
+  'CARD_REMOVED':         '✅ Card removed',
+  'TENDER_FINAL':         '🏁 Transaction complete',
+  'ASK_DCC':              '💱 DCC offered to customer',
+  'DCC_ACCEPTED':         '✅ DCC accepted',
+  'DCC_REJECTED':         '❌ DCC rejected',
+  'ASK_GRATUITY':         '� Waiting for tip...',
+  'GRATUITY_ENTERED':     '✅ Tip entered',
+  'BALANCE_QUERY_STARTED': '🔍 Checking balance...',
+  'BALANCE_QUERY_COMPLETED': '✅ Balance check done',
+  'PROVIDE_CARD_DETAILS': '⌨️ Waiting for card details...',
+  'CARD_DETAILS_PROVIDED': '✅ Card details entered',
+};
+
+function updateTerminalDisplay(data) {
+  const { events } = data;
+  if (!events || events.length === 0) return;
+
+  const displayEl = document.getElementById('terminal-display');
+  displayEl.classList.add('active');
+
+  const lines = events.map(e => {
+    if (e.type === 'event') {
+      let text = EVENT_DISPLAY[e.event] || e.event;
+      if (e.event === 'TENDER_FINAL' && e.result) {
+        text += e.result === 'Success' ? ' — ✅ Approved' : ` — ❌ ${e.result}`;
+      }
+      return text;
+    }
+    return e.text || '';
+  }).filter(Boolean);
+
+  $terminalDisplay.innerHTML = lines.map(l =>
+    `<div class="terminal-display-line">${l}</div>`
+  ).join('');
+
+  // Auto-reset to idle after 30s of no updates
+  clearTimeout(_displayTimeout);
+  _displayTimeout = setTimeout(() => {
+    $terminalDisplay.innerHTML = '<span class="terminal-display-idle">Waiting for terminal activity...</span>';
+    displayEl.classList.remove('active');
+  }, 30000);
 }
 
 // ====================== Products ======================

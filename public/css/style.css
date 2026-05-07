@@ -632,6 +632,53 @@ html, body {
 .product-name { font-weight: 600; font-size: .88rem; line-height: 1.2; color: var(--text); }
 .product-price { color: var(--text-light); font-weight: 700; font-size: .92rem; }
 
+/* ============ Terminal Display ============ */
+.terminal-display {
+  margin: 0 24px;
+  padding: 10px 14px;
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 10px;
+  flex-shrink: 0;
+  transition: all .3s;
+}
+.terminal-display.active {
+  background: rgba(0,113,227,.08);
+  border-color: rgba(0,113,227,.2);
+}
+.terminal-display-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.terminal-display-icon { font-size: .8rem; }
+.terminal-display-title {
+  font-size: .72rem;
+  font-weight: 600;
+  color: rgba(255,255,255,.5);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+.terminal-display-content {
+  min-height: 20px;
+}
+.terminal-display-idle {
+  font-size: .75rem;
+  color: rgba(255,255,255,.3);
+  font-style: italic;
+}
+.terminal-display-line {
+  font-size: .85rem;
+  color: rgba(255,255,255,.85);
+  padding: 2px 0;
+  animation: displayFadeIn .3s ease;
+}
+@keyframes displayFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* ============ Cart Section ============ */
 #cart-section {
   flex: 1;
