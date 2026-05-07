@@ -640,20 +640,25 @@ html, body {
   padding: 20px;
   display: flex;
   flex-direction: column;
-}
-.terminal-display.hidden {
-  display: none;
+  margin-left: -8px;
 }
 .terminal-display-content {
-  min-height: 30px;
+  background: rgba(255,255,255,.92);
+  border-radius: 8px;
+  padding: 14px 16px;
+  min-height: 40px;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
+.terminal-display-idle {
+  font-size: 1.1rem;
+  color: rgba(0,0,0,.3);
+}
 .terminal-display-line {
-  font-size: 1rem;
-  color: rgba(255,255,255,.85);
-  padding: 4px 0;
+  font-size: 1.1rem;
+  color: rgba(0,0,0,.8);
+  padding: 3px 0;
   animation: displayFadeIn .3s ease;
 }
 @keyframes displayFadeIn {

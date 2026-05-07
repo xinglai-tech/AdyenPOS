@@ -237,8 +237,6 @@ function setupSSE() {
 }
 
 // ====================== Terminal Display ======================
-let _displayTimeout = null;
-
 const EVENT_DISPLAY = {
   'TENDER_CREATED':       'Transaction started',
   'CARD_INSERTED':        'Card inserted',
@@ -270,9 +268,6 @@ function updateTerminalDisplay(data) {
   const { events } = data;
   if (!events || events.length === 0) return;
 
-  const displayEl = document.getElementById('terminal-display');
-  displayEl.classList.remove('hidden');
-
   const lines = events.map(e => {
     if (e.type === 'event') {
       let text = EVENT_DISPLAY[e.event] || e.event;
@@ -287,13 +282,6 @@ function updateTerminalDisplay(data) {
   $terminalDisplay.innerHTML = lines.map(l =>
     `<div class="terminal-display-line">${l}</div>`
   ).join('');
-
-  // Auto-hide after 10s of no updates
-  clearTimeout(_displayTimeout);
-  _displayTimeout = setTimeout(() => {
-    displayEl.classList.add('hidden');
-    $terminalDisplay.innerHTML = '';
-  }, 10000);
 }
 
 // ====================== Products ======================
