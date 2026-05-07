@@ -281,7 +281,7 @@ function updateTerminalDisplay(data) {
       _currentTxnId = e.transactionId;
       clearTimeout(_displayClearTimeout);
     }
-    if (e.event === 'TENDER_FINAL') {
+    if (e.event === 'TENDER_FINAL' || e.event === 'CARD_REMOVED') {
       isFinal = true;
     }
   }
@@ -299,7 +299,7 @@ function updateTerminalDisplay(data) {
 
   let html = '';
   if (_currentTxnId) {
-    html += `<div class="terminal-display-txnid">${_currentTxnId}</div>`;
+    html += `<div class="terminal-display-txnid">Tender reference: ${_currentTxnId}</div>`;
   }
   html += lines.map(l =>
     `<div class="terminal-display-line">${l}</div>`
