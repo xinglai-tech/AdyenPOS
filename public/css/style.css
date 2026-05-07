@@ -239,18 +239,21 @@ html, body {
   display: flex;
   gap: 20px;
   padding: 16px 24px 8px;
-  flex-shrink: 0;
+  flex: 6 1 0;
+  min-height: 0;
   align-items: stretch;
 }
 #product-settings-row #product-section {
   padding: 0;
   min-width: 0;
+  flex-shrink: 0;
+  width: fit-content;
 }
 
 /* ============ Settings Section ============ */
 #settings-section {
-  width: 280px;
-  flex-shrink: 0;
+  width: clamp(180px, 20vw, 280px);
+  flex-shrink: 1;
 }
 #settings-section .section-title {
   margin-bottom: 14px;
@@ -267,13 +270,13 @@ html, body {
   flex-direction: column;
 }
 .settings-group {
-  margin-bottom: 12px;
+  margin-bottom: clamp(6px, 1vw, 12px);
 }
 .settings-group:last-child {
   margin-bottom: 0;
 }
 .settings-label {
-  font-size: .7rem;
+  font-size: clamp(.55rem, 1vw, .7rem);
   font-weight: 600;
   color: var(--text-light);
   text-transform: uppercase;
@@ -298,17 +301,17 @@ html, body {
 .settings-buttons {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 18px;
+  align-items: stretch;
+  gap: clamp(6px, 1vw, 14px);
+  margin-bottom: clamp(8px, 1.2vw, 18px);
 }
 .settings-btn {
-  width: 210px;
+  width: 100%;
   white-space: nowrap;
   text-align: center;
   justify-content: center;
-  padding: 8px 16px !important;
-  font-size: .86rem !important;
+  padding: clamp(4px, 0.6vw, 8px) clamp(8px, 1vw, 16px) !important;
+  font-size: clamp(.65rem, 1.2vw, .86rem) !important;
   border-radius: 8px !important;
 }
 .settings-mode {
@@ -584,19 +587,25 @@ html, body {
 /* ============ Product Section ============ */
 #product-section {
   padding: 0;
+  display: flex;
+  flex-direction: column;
 }
 .section-title { font-size: 1.05rem; font-weight: 700; margin-bottom: 14px; color: var(--text); letter-spacing: -.01em; }
 
 .product-grid {
+  min-height: 0;
   display: grid;
-  grid-template-columns: repeat(3, 140px);
-  gap: 14px;
+  grid-template-columns: repeat(3, auto);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 8px;
   justify-content: start;
+  height: 100%;
 }
 
 .product-card {
-  width: 140px;
-  height: 140px;
+  height: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
   border-radius: var(--radius);
   background: var(--card-bg);
   box-shadow: var(--shadow);
@@ -621,8 +630,9 @@ html, body {
 }
 
 .product-img {
-  width: 72px;
-  height: 72px;
+  flex: 1;
+  min-height: 0;
+  width: 60%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -633,9 +643,12 @@ html, body {
 
 /* ============ Terminal Display ============ */
 .terminal-display {
-  min-width: 360px;
+  flex: 1;
+  min-width: 120px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 .terminal-display-content {
   background: rgba(255,255,255,.92);
@@ -670,7 +683,8 @@ html, body {
 
 /* ============ Cart Section ============ */
 #cart-section {
-  flex: 1;
+  flex: 4 1 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   padding: 0 24px 16px;
