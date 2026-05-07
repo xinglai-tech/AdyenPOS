@@ -634,23 +634,26 @@ html, body {
 
 /* ============ Terminal Display ============ */
 .terminal-display {
-  margin: 0 24px;
-  padding: 8px 14px;
-  background: rgba(0,113,227,.08);
-  border: 1px solid rgba(0,113,227,.2);
-  border-radius: 10px;
-  flex-shrink: 0;
+  min-width: 180px;
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
 }
 .terminal-display.hidden {
   display: none;
 }
 .terminal-display-content {
-  min-height: 20px;
+  min-height: 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .terminal-display-line {
-  font-size: .85rem;
+  font-size: 1rem;
   color: rgba(255,255,255,.85);
-  padding: 2px 0;
+  padding: 4px 0;
   animation: displayFadeIn .3s ease;
 }
 @keyframes displayFadeIn {
