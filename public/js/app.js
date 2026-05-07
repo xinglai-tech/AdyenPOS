@@ -271,7 +271,7 @@ function updateTerminalDisplay(data) {
   if (!events || events.length === 0) return;
 
   const displayEl = document.getElementById('terminal-display');
-  displayEl.classList.add('active');
+  displayEl.classList.remove('hidden');
 
   const lines = events.map(e => {
     if (e.type === 'event') {
@@ -288,12 +288,12 @@ function updateTerminalDisplay(data) {
     `<div class="terminal-display-line">${l}</div>`
   ).join('');
 
-  // Auto-reset to idle after 30s of no updates
+  // Auto-hide after 10s of no updates
   clearTimeout(_displayTimeout);
   _displayTimeout = setTimeout(() => {
-    $terminalDisplay.innerHTML = '<span class="terminal-display-idle">Waiting for terminal activity...</span>';
-    displayEl.classList.remove('active');
-  }, 30000);
+    displayEl.classList.add('hidden');
+    $terminalDisplay.innerHTML = '';
+  }, 10000);
 }
 
 // ====================== Products ======================
