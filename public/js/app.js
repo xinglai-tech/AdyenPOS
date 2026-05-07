@@ -173,6 +173,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderProducts();
   renderCart();
   $toggleAsync.checked = state.isAsync;
+  document.getElementById('terminal-display').style.display = state.isAsync ? '' : 'none';
   setupSSE();
   bindEvents();
   checkTerminal();
@@ -265,6 +266,7 @@ const EVENT_DISPLAY = {
 };
 
 function updateTerminalDisplay(data) {
+  if (!state.isAsync) return;
   const { events } = data;
   if (!events || events.length === 0) return;
 
@@ -976,6 +978,7 @@ function bindEvents() {
   $toggleAsync.addEventListener('change', (e) => {
     state.isAsync = e.target.checked;
     localStorage.setItem('posAsyncMode', state.isAsync);
+    document.getElementById('terminal-display').style.display = state.isAsync ? '' : 'none';
     showToast(state.isAsync ? 'Switched to Async mode' : 'Switched to Sync mode', 'info');
   });
 
