@@ -476,11 +476,26 @@ app.post('/api/webhook', (req, res) => {
         else if (errCond === 'Aborted' || errCond === 'Cancel') order.status = 'cancelled';
         else order.status = 'failed';
         if (result !== 'Success') {
+          const friendlyMessages = {
+            'Busy': 'Terminal busy — another transaction in progress',
+            'Aborted': 'Transaction cancelled',
+            'Cancel': 'Transaction cancelled',
+            'Refusal': 'Payment declined',
+            'NotFound': 'Transaction not found',
+            'UnavailableService': 'Terminal service unavailable',
+            'InvalidCard': 'Invalid card',
+            'WrongPIN': 'Wrong PIN entered',
+          };
           const additional = paymentResponse.Response?.AdditionalResponse || '';
-          let msg = '';
-          try { msg = new URLSearchParams(additional).get('message') || ''; } catch {}
-          if (!msg) msg = additional.match(/message=([^&]*)/)?.[1] || '';
-          order.failureReason = msg || errCond || 'Unknown error';
+          let rawMsg = '';
+          try { rawMsg = new URLSearchParams(additional).get('message') || ''; } catch {}
+          if (!rawMsg) rawMsg = additional.match(/message=([^&]*)/)?.[1] || '';
+          // Check for known cancel patterns in raw message
+          if (rawMsg.match(/cancel/i) || rawMsg.match(/merchant\s*cancel/i)) {
+            order.failureReason = 'Transaction cancelled by merchant';
+          } else {
+            order.failureReason = friendlyMessages[errCond] || rawMsg || errCond || 'Unknown error';
+          }
         }
         order.response = body;
 
