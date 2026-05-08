@@ -106,7 +106,7 @@ html, body {
 }
 .order-card-psp {
   font-size: .68rem;
-  color: #64d2ff;
+  color: rgba(255,255,255,.75);
   font-family: 'SF Mono', ui-monospace, monospace;
   margin-bottom: 6px;
   word-break: break-all;
@@ -114,7 +114,7 @@ html, body {
 
 .order-card-items {
   font-size: .8rem;
-  color: rgba(255,255,255,.85);
+  color: #64d2ff;
   margin-bottom: 8px;
   line-height: 1.4;
 }

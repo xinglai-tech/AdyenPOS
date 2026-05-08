@@ -22,24 +22,28 @@ const PRODUCT_SVGS = {
     <path d="M30 43H70" stroke="#94a3b8" stroke-width="1" opacity=".4"/>
     <path d="M30 51H70" stroke="#94a3b8" stroke-width="1" opacity=".4"/>
   </svg>`,
-  usbdrive: `<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="30" y="20" width="40" height="60" rx="4" fill="#3b82f6" stroke="#2563eb" stroke-width="2.5"/>
-    <rect x="38" y="80" width="24" height="10" rx="1" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
-    <rect x="42" y="83" width="5" height="4" rx="1" fill="#64748b"/>
-    <rect x="52" y="83" width="5" height="4" rx="1" fill="#64748b"/>
-    <circle cx="50" cy="45" r="8" fill="#1d4ed8" stroke="#1e40af" stroke-width="2"/>
-    <circle cx="50" cy="45" r="4" fill="#60a5fa"/>
-    <rect x="38" y="60" width="24" height="3" rx="1" fill="#2563eb" opacity=".5"/>
-    <circle cx="42" y="28" r="2" fill="#93c5fd"/>
+  keyboard: `<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="8" y="32" width="84" height="40" rx="5" fill="#334155" stroke="#1e293b" stroke-width="2.5"/>
+    <rect x="14" y="38" width="10" height="8" rx="1.5" fill="#475569"/>
+    <rect x="27" y="38" width="10" height="8" rx="1.5" fill="#475569"/>
+    <rect x="40" y="38" width="10" height="8" rx="1.5" fill="#475569"/>
+    <rect x="53" y="38" width="10" height="8" rx="1.5" fill="#475569"/>
+    <rect x="66" y="38" width="10" height="8" rx="1.5" fill="#475569"/>
+    <rect x="79" y="38" width="10" height="8" rx="1.5" fill="#475569"/>
+    <rect x="14" y="49" width="10" height="8" rx="1.5" fill="#475569"/>
+    <rect x="27" y="49" width="10" height="8" rx="1.5" fill="#475569"/>
+    <rect x="40" y="49" width="10" height="8" rx="1.5" fill="#475569"/>
+    <rect x="53" y="49" width="10" height="8" rx="1.5" fill="#475569"/>
+    <rect x="66" y="49" width="10" height="8" rx="1.5" fill="#475569"/>
+    <rect x="79" y="49" width="10" height="8" rx="1.5" fill="#475569"/>
+    <rect x="27" y="60" width="46" height="8" rx="1.5" fill="#475569"/>
   </svg>`,
-  usbcable: `<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="18" y="38" width="22" height="14" rx="3" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
-    <rect x="22" y="42" width="5" height="6" rx="1" fill="#64748b"/>
-    <rect x="30" y="42" width="5" height="6" rx="1" fill="#64748b"/>
-    <path d="M40 45C50 45 50 35 60 35S70 45 75 45" stroke="#475569" stroke-width="3" fill="none" stroke-linecap="round"/>
-    <rect x="75" y="38" width="12" height="14" rx="4" fill="#1e293b" stroke="#0f172a" stroke-width="2"/>
-    <rect x="78" y="42" width="6" height="6" rx="1" fill="#38bdf8"/>
-    <path d="M40 55C48 55 52 65 60 65S68 55 75 55" stroke="#94a3b8" stroke-width="2" fill="none" stroke-linecap="round" stroke-dasharray="4 3"/>
+  mouse: `<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M50 16C50 16 46 8 50 4S54 8 54 16" stroke="#475569" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+    <rect x="28" y="16" width="44" height="68" rx="22" fill="#334155" stroke="#1e293b" stroke-width="2.5"/>
+    <line x1="50" y1="16" x2="50" y2="44" stroke="#1e293b" stroke-width="2"/>
+    <rect x="46" y="24" width="8" height="14" rx="4" fill="#475569" stroke="#64748b" stroke-width="1.5"/>
+    <ellipse cx="50" cy="60" rx="10" ry="6" fill="#475569" opacity=".3"/>
   </svg>`,
   burger: `<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M18 45C18 32 30 22 50 22S82 32 82 45H18Z" fill="#ea580c" stroke="#c2410c" stroke-width="2.5" stroke-linejoin="round"/>
@@ -106,8 +110,8 @@ const PRODUCTS = [
   { id: 'icecream', name: 'Ice Cream', price: 5, color: '#fce7f3' },
   { id: 'noodles',  name: 'Noodles',   price: 15, color: '#fef3c7' },
   { id: 'burger',   name: 'Burger',    price: 20, color: '#fef3c7' },
-  { id: 'usbcable', name: 'USB Cable', price: 30, color: '#f1f5f9' },
-  { id: 'usbdrive', name: 'USB Drive', price: 50, color: '#dbeafe' },
+  { id: 'mouse', name: 'Mouse', price: 30, color: '#f1f5f9' },
+  { id: 'keyboard', name: 'Keyboard', price: 50, color: '#dbeafe' },
   { id: 'harddrive', name: 'Hard Drive', price: 100, color: '#e2e8f0' },
   { id: 'headphones', name: 'Headphones', price: 1000, color: '#e2e8f0' },
   { id: 'phone',  name: 'Phone',   price: 2000, color: '#e0f2fe' },
