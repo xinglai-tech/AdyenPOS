@@ -74,6 +74,23 @@ html, body {
   text-align: center;
 }
 
+.order-search {
+  padding: 10px 12px 0;
+}
+.order-search input {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: .75rem;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 6px;
+  background: rgba(255,255,255,.06);
+  color: #fff;
+  outline: none;
+  transition: border-color .2s;
+}
+.order-search input::placeholder { color: rgba(255,255,255,.35); }
+.order-search input:focus { border-color: var(--primary); }
+
 .order-list {
   flex: 1;
   overflow-y: auto;
@@ -99,6 +116,12 @@ html, body {
 }
 .order-card-id { font-size: .72rem; color: rgba(255,255,255,.75); font-family: 'SF Mono', ui-monospace, monospace; }
 
+.order-card-brand {
+  font-size: .68rem;
+  font-weight: 600;
+  color: #fbbf24;
+  margin-bottom: 4px;
+}
 .order-card-reason {
   font-size: .68rem;
   color: #ff6b6b;

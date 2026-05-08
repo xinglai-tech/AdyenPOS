@@ -116,6 +116,22 @@ function extractTenderReference(paymentResponse) {
   return null;
 }
 
+function extractPaymentBrand(paymentResponse) {
+  if (!paymentResponse) return null;
+  // 1. CardData.PaymentBrand (most common for card payments)
+  const cardBrand = paymentResponse.PaymentResult?.PaymentInstrumentData?.CardData?.PaymentBrand;
+  if (cardBrand) return cardBrand;
+  // 2. AdditionalResponse paymentMethod or paymentMethodVariant
+  const additional = paymentResponse.Response?.AdditionalResponse;
+  if (additional) {
+    try {
+      const params = new URLSearchParams(additional);
+      return params.get('paymentMethodVariant') || params.get('paymentMethod') || null;
+    } catch { /* ignore */ }
+  }
+  return null;
+}
+
 function broadcastSSE(event, data) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   sseClients.forEach(c => c.write(payload));
@@ -273,6 +289,7 @@ app.post('/api/transaction-status', async (req, res) => {
         }
         order.pspReference = extractPspReference(paymentResponse);
         order.tenderReference = extractTenderReference(paymentResponse);
+        order.paymentBrand = extractPaymentBrand(paymentResponse);
         broadcastSSE('orderUpdate', order);
       }
     }
@@ -368,6 +385,7 @@ app.post('/api/payment', async (req, res) => {
     }
     order.pspReference = extractPspReference(paymentResp);
     order.tenderReference = extractTenderReference(paymentResp);
+    order.paymentBrand = extractPaymentBrand(paymentResp);
 
     broadcastSSE('orderUpdate', order);
     try { res.json({ order, adyenResponse: data }); } catch (_) { /* client may have disconnected */ }
@@ -506,6 +524,7 @@ app.post('/api/webhook', (req, res) => {
         }
         order.pspReference = extractPspReference(paymentResponse);
         order.tenderReference = extractTenderReference(paymentResponse);
+        order.paymentBrand = extractPaymentBrand(paymentResponse);
         broadcastSSE('orderUpdate', order);
       }
     }

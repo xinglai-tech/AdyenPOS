@@ -138,6 +138,7 @@ const $toggleAsync     = document.getElementById('toggle-async');
 const $orderList       = document.getElementById('order-list');
 const $orderCount      = document.getElementById('order-count');
 const $btnClearOrders  = document.getElementById('btn-clear-orders');
+const $orderSearch     = document.getElementById('order-search-input');
 const $apiResponse     = document.getElementById('api-response');
 const $btnClearResp    = document.getElementById('btn-clear-response');
 const $btnToggleLog    = document.getElementById('btn-toggle-log');
@@ -409,12 +410,23 @@ function renderOrders() {
   const cur = state.config.currency || 'EUR';
   $orderCount.textContent = state.orders.length;
 
-  if (state.orders.length === 0) {
-    $orderList.innerHTML = '<div class="empty-state">No orders yet</div>';
+  const query = ($orderSearch?.value || '').trim().toLowerCase();
+  const filtered = query
+    ? state.orders.filter(o =>
+        (o.serviceId || '').toLowerCase().includes(query) ||
+        (o.pspReference || '').toLowerCase().includes(query) ||
+        (o.tenderReference || '').toLowerCase().includes(query) ||
+        (o.poiTransactionId || '').toLowerCase().includes(query))
+    : state.orders;
+
+  if (filtered.length === 0) {
+    $orderList.innerHTML = query
+      ? '<div class="empty-state">No matching orders</div>'
+      : '<div class="empty-state">No orders yet</div>';
     return;
   }
 
-  $orderList.innerHTML = state.orders.map(o => {
+  $orderList.innerHTML = filtered.map(o => {
     const itemsSummary = (o.items || []).map(i => `${i.name} x${i.qty}`).join(', ');
     const time = new Date(o.createdAt).toLocaleTimeString();
     const canRefund = (o.status === 'paid' || o.status === 'refund_failed') && o.poiTransactionId;
@@ -429,6 +441,7 @@ function renderOrders() {
         ${o.pspReference ? `<div class="order-card-psp">PSP: ${o.pspReference}</div>` : ''}
         ${o.tenderReference ? `<div class="order-card-psp">Tender: ${o.tenderReference}</div>` : ''}
         ${o.poiTransactionId ? `<div class="order-card-psp">Tender reference: ${o.poiTransactionId.split('.')[0]}</div>` : ''}
+        ${o.paymentBrand ? `<div class="order-card-psp">Payment method: ${formatBrand(o.paymentBrand)}</div>` : ''}
         <div class="order-card-items">${itemsSummary || 'No items'}</div>
         <div class="order-card-footer">
           <span class="order-card-amount">${cur} ${(o.amount || 0).toFixed(2)}</span>
@@ -452,6 +465,17 @@ function formatStatus(s) {
     refunded: 'Refunded', refund_failed: 'Refund Failed'
   };
   return map[s] || s;
+}
+
+function formatBrand(brand) {
+  const map = {
+    mc: 'Mastercard', visa: 'Visa', amex: 'Amex', maestro: 'Maestro',
+    discover: 'Discover', jcb: 'JCB', cup: 'UnionPay', diners: 'Diners',
+    eftpos_australia: 'eftpos', interac: 'Interac', cartebancaire: 'Carte Bancaire',
+    bcmc: 'Bancontact', girocard: 'Girocard', alipay: 'Alipay', wechatpay: 'WeChat Pay',
+    swish: 'Swish', twint: 'TWINT', paypal: 'PayPal',
+  };
+  return map[brand?.toLowerCase()] || brand;
 }
 
 // ====================== Terminal Check ======================
@@ -1006,6 +1030,7 @@ function bindEvents() {
   $btnSwitchCancel.addEventListener('click', closeSwitchModal);
   $inputPoiId.addEventListener('keydown', (e) => { if (e.key === 'Enter') confirmSwitch(); });
   $btnClearOrders.addEventListener('click', clearOrders);
+  $orderSearch.addEventListener('input', () => renderOrders());
   $btnClearResp.addEventListener('click', () => { $apiResponse.innerHTML = '<span class="log-empty">No response yet</span>'; });
   $btnToggleLog.addEventListener('click', () => {
     $rightCol.classList.toggle('hidden');
