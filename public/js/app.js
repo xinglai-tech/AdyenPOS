@@ -161,7 +161,6 @@ const $btnCloseOverlay = document.getElementById('btn-close-overlay');
 
 // Refund modal
 const $refundModal     = document.getElementById('refund-modal');
-const $refundMsg       = document.getElementById('refund-modal-msg');
 const $btnRefundOk     = document.getElementById('btn-refund-confirm');
 const $btnRefundCancel = document.getElementById('btn-refund-cancel');
 
@@ -429,7 +428,7 @@ function renderOrders() {
   $orderList.innerHTML = filtered.map(o => {
     const itemsSummary = (o.items || []).map(i => `${i.name} x${i.qty}`).join(', ');
     const time = new Date(o.createdAt).toLocaleTimeString();
-    const canRefund = (o.status === 'paid' || o.status === 'refund_failed') && o.poiTransactionId;
+    const canRefund = (o.status === 'paid' || o.status === 'partially_refunded' || o.status === 'refund_failed') && o.poiTransactionId;
 
     return `
       <div class="order-card">
@@ -452,7 +451,7 @@ function renderOrders() {
             <button class="btn-check-order" onclick="queryOrderStatus('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Check Status</button>
             <button class="btn-cancel-order" onclick="cancelOrder('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Cancel</button>
           </div>` : ''}
-        ${canRefund ? `<button class="btn-refund" onclick="promptRefund('${o.id}')" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>↩ Refund</button>` : ''}
+        ${canRefund ? `<button class="btn-refund" onclick="promptRefund('${o.id}')" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Refund</button>` : ''}
       </div>
     `;
   }).join('');
@@ -462,7 +461,7 @@ function formatStatus(s) {
   const map = {
     pending: 'Pending', paid: 'Paid', failed: 'Failed',
     cancelled: 'Cancelled', error: 'Error',
-    refunded: 'Refunded', refund_failed: 'Refund Failed'
+    refunded: 'Refunded', partially_refunded: 'Partial Refund', refund_failed: 'Refund Failed'
   };
   return map[s] || s;
 }
@@ -617,10 +616,23 @@ function generateServiceId() {
   return Math.random().toString(36).slice(2, 12);
 }
 
-async function initiatePayment() {
+const $paymethodModal = document.getElementById('paymethod-modal');
+const $btnPaymethodCancel = document.getElementById('btn-paymethod-cancel');
+
+function initiatePayment() {
   const total = cartTotal();
   if (total <= 0) return;
+  $paymethodModal.classList.remove('hidden');
+}
 
+function closePaymethodModal() {
+  $paymethodModal.classList.add('hidden');
+}
+
+async function processPayment(allowedBrand) {
+  closePaymethodModal();
+
+  const total = cartTotal();
   const items = state.cart.map(c => ({
     id: c.product.id,
     name: c.product.name,
@@ -637,12 +649,11 @@ async function initiatePayment() {
     useAsync: state.isAsync,
     serviceId
   };
+  if (allowedBrand) body.allowedPaymentBrand = allowedBrand;
 
   if (state.isAsync) {
-    // Async: send and move on
     await payAsync(body);
   } else {
-    // Sync: show overlay
     await paySync(body);
   }
 }
@@ -880,37 +891,105 @@ async function cancelPayment() {
 
 // ====================== Refund ======================
 let _refundOrderId = null;
+const $refundAmountRow = document.getElementById('refund-amount-row');
+const $refundAmountInput = document.getElementById('refund-amount-input');
+const $refundTypeRadios = document.querySelectorAll('input[name="refund-type"]');
+
+$refundTypeRadios.forEach(r => r.addEventListener('change', () => {}));
+
+const $refundPsp = document.getElementById('refund-modal-psp');
+const $refundModalAmount = document.getElementById('refund-modal-amount');
+const $refundModalRefunded = document.getElementById('refund-modal-refunded');
+const $refundModalRemaining = document.getElementById('refund-modal-remaining');
+const $refundTypeUnref = document.getElementById('refund-type-unreferenced');
 
 function promptRefund(orderId) {
   const order = state.orders.find(o => o.id === orderId);
   if (!order) return;
   _refundOrderId = orderId;
   const cur = state.config.currency || 'EUR';
-  $refundMsg.textContent = `Refund order #${orderId.slice(0, 8)} for ${cur} ${order.amount.toFixed(2)}?`;
+  const refunded = order.refundedAmount || 0;
+  const remaining = order.amount - refunded;
+
+  $refundPsp.textContent = `PSP: ${order.pspReference || '—'}`;
+  $refundModalAmount.textContent = `Amount: ${cur} ${order.amount.toFixed(2)}`;
+  if (refunded > 0) {
+    $refundModalRefunded.textContent = `Refunded: ${cur} ${refunded.toFixed(2)}`;
+    $refundModalRemaining.textContent = `Remaining: ${cur} ${remaining.toFixed(2)}`;
+    $refundModalRefunded.classList.remove('hidden');
+    $refundModalRemaining.classList.remove('hidden');
+  } else {
+    $refundModalRefunded.classList.add('hidden');
+    $refundModalRemaining.classList.add('hidden');
+  }
+
+  $refundAmountInput.value = remaining.toFixed(2);
+  $refundAmountInput.max = remaining;
+  document.querySelector('input[name="refund-type"][value="referenced"]').checked = true;
+  $refundAmountRow.classList.remove('hidden');
+
+  const isCard = !order.paymentBrand || !order.paymentBrand.match(/duitnow|paynow|alipay|wechat|grabpay/i);
+  $refundTypeUnref.style.display = isCard ? '' : 'none';
+
   $refundModal.classList.remove('hidden');
+}
+
+const $refundResult = document.getElementById('refund-result');
+const $btnRefundClose = document.getElementById('btn-refund-close');
+
+function setRefundModalState(mode) {
+  // mode: 'input' | 'processing' | 'done'
+  const inputEls = [$refundAmountRow, document.querySelector('.refund-type-row')];
+  $btnRefundOk.classList.toggle('hidden', mode !== 'input');
+  $btnRefundCancel.classList.toggle('hidden', mode !== 'input');
+  $btnRefundClose.classList.toggle('hidden', mode === 'input' || mode === 'processing');
+  inputEls.forEach(el => { if (el) el.style.pointerEvents = mode === 'input' ? '' : 'none'; });
+  if (mode === 'input') {
+    $refundResult.classList.add('hidden');
+  }
 }
 
 async function executeRefund() {
   if (!_refundOrderId) return;
-  $refundModal.classList.add('hidden');
+  const refundType = document.querySelector('input[name="refund-type"]:checked').value;
+
+  const amount = parseFloat($refundAmountInput.value);
+  if (!amount || amount <= 0) {
+    showToast('Invalid refund amount', 'warning');
+    return;
+  }
+
+  setRefundModalState('processing');
+  $refundResult.className = 'refund-result processing';
+  $refundResult.textContent = 'Processing refund...';
+  $refundResult.classList.remove('hidden');
 
   try {
-    const res = await fetch('/api/refund', {
+    let res, data;
+    const url = refundType === 'unreferenced' ? '/api/refund/unreferenced' : '/api/refund';
+    res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderId: _refundOrderId })
+      body: JSON.stringify({ orderId: _refundOrderId, amount })
     });
-    const data = await res.json();
-    showApiResponse('Refund', data.adyenResponse || data);
+    data = await res.json();
+    showApiResponse(`Refund (${refundType})`, data.adyenResponse || data);
 
-    if (data.order && data.order.status === 'refunded') {
-      showToast('Refund successful', 'success');
+    if (data.order && (data.order.status === 'refunded' || data.order.status === 'partially_refunded')) {
+      const msg = data.order.status === 'refunded'
+        ? 'Refund successful'
+        : `Partial refund successful (${data.order.refundedAmount?.toFixed(2)} / ${data.order.amount?.toFixed(2)})`;
+      $refundResult.className = 'refund-result success';
+      $refundResult.textContent = msg;
     } else {
-      showToast(`Refund result: ${data.order?.status || data.error || 'unknown'}`, 'error');
+      $refundResult.className = 'refund-result error';
+      $refundResult.textContent = data.order?.status || data.error || 'Refund failed';
     }
   } catch (err) {
-    showToast(`Refund error: ${err.message}`, 'error');
+    $refundResult.className = 'refund-result error';
+    $refundResult.textContent = `Error: ${err.message}`;
   }
+  setRefundModalState('done');
   _refundOrderId = null;
 }
 
@@ -1029,6 +1108,10 @@ function bindEvents() {
   $btnSwitchOk.addEventListener('click', confirmSwitch);
   $btnSwitchCancel.addEventListener('click', closeSwitchModal);
   $inputPoiId.addEventListener('keydown', (e) => { if (e.key === 'Enter') confirmSwitch(); });
+  $btnPaymethodCancel.addEventListener('click', closePaymethodModal);
+  $paymethodModal.querySelectorAll('.paymethod-btn').forEach(btn => {
+    btn.addEventListener('click', () => processPayment(btn.dataset.brand || ''));
+  });
   $btnClearOrders.addEventListener('click', clearOrders);
   $orderSearch.addEventListener('input', () => renderOrders());
   $btnClearResp.addEventListener('click', () => { $apiResponse.innerHTML = '<span class="log-empty">No response yet</span>'; });
@@ -1064,8 +1147,13 @@ function bindEvents() {
   // Refund modal
   $btnRefundOk.addEventListener('click', executeRefund);
   $btnRefundCancel.addEventListener('click', () => {
+    setRefundModalState('input');
     $refundModal.classList.add('hidden');
     _refundOrderId = null;
+  });
+  $btnRefundClose.addEventListener('click', () => {
+    setRefundModalState('input');
+    $refundModal.classList.add('hidden');
   });
 }
 

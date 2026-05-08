@@ -135,11 +135,30 @@
   <!-- ==================== Refund Confirm Modal ==================== -->
   <div id="refund-modal" class="overlay hidden">
     <div class="overlay-content modal-sm">
-      <h2>Confirm Refund</h2>
-      <p id="refund-modal-msg"></p>
+      <h2>Refund</h2>
+      <p id="refund-modal-psp" class="refund-modal-detail"></p>
+      <p id="refund-modal-amount" class="refund-modal-detail"></p>
+      <p id="refund-modal-refunded" class="refund-modal-detail"></p>
+      <p id="refund-modal-remaining" class="refund-modal-detail"></p>
+      <div class="refund-type-row">
+        <label class="refund-type-label">
+          <input type="radio" name="refund-type" value="referenced" checked />
+          Referenced
+        </label>
+        <label id="refund-type-unreferenced" class="refund-type-label">
+          <input type="radio" name="refund-type" value="unreferenced" />
+          Unreferenced
+        </label>
+      </div>
+      <div id="refund-amount-row" class="refund-amount-row hidden">
+        <label class="refund-amount-label">Amount</label>
+        <input id="refund-amount-input" type="number" step="0.01" min="0.01" class="refund-amount-input" />
+      </div>
+      <div id="refund-result" class="refund-result hidden"></div>
       <div class="overlay-actions">
         <button id="btn-refund-confirm" class="btn btn-danger">Refund</button>
         <button id="btn-refund-cancel" class="btn btn-outline">Cancel</button>
+        <button id="btn-refund-close" class="btn btn-outline hidden">Close</button>
       </div>
     </div>
   </div>
@@ -158,6 +177,30 @@
       <div class="overlay-actions">
         <button id="btn-switch-confirm" class="btn btn-primary">Connect</button>
         <button id="btn-switch-cancel" class="btn btn-outline">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== Payment Method Modal ==================== -->
+  <div id="paymethod-modal" class="overlay hidden">
+    <div class="overlay-content modal-paymethod">
+      <h3 class="overlay-title">Select Payment Method</h3>
+      <div class="paymethod-grid">
+        <button class="paymethod-btn" data-brand="">
+          <img src="https://checkoutshopper-live.adyen.com/checkoutshopper/images/logos/card.svg" alt="Card" />
+          <span>Card</span>
+        </button>
+        <button class="paymethod-btn" data-brand="duitnow_pos">
+          <img src="https://checkoutshopper-live.adyen.com/checkoutshopper/images/logos/duitnow_pos.svg" alt="DuitNow" />
+          <span>DuitNow POS</span>
+        </button>
+        <button class="paymethod-btn" data-brand="paynow_pos">
+          <img src="https://checkoutshopper-live.adyen.com/checkoutshopper/images/logos/paynow_pos.svg" alt="PayNow" />
+          <span>PayNow POS</span>
+        </button>
+      </div>
+      <div class="overlay-actions">
+        <button id="btn-paymethod-cancel" class="btn btn-outline">Cancel</button>
       </div>
     </div>
   </div>

@@ -218,6 +218,7 @@ html, body {
 .status-cancelled { background: rgba(142,142,147,.15); color: #8e8e93; }
 .status-error     { background: rgba(255,59,48,.15); color: var(--danger); }
 .status-refunded  { background: rgba(175,82,222,.15); color: #bf5af2; }
+.status-partially_refunded { background: rgba(255,149,0,.15); color: var(--warning); }
 .status-refund_failed { background: rgba(255,59,48,.15); color: var(--danger); }
 
 /* ============ RIGHT: Main Panel ============ */
@@ -899,6 +900,94 @@ html, body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(0,0,0,.12); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.2); }
+
+/* ============ Refund Modal ============ */
+.refund-modal-detail {
+  font-size: .88rem;
+  color: var(--text-light);
+  margin-bottom: 8px;
+  text-align: left;
+}
+.refund-type-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+  text-align: left;
+}
+.refund-type-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: .85rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.refund-amount-row {
+  margin: 12px 0;
+  text-align: left;
+}
+.refund-amount-label {
+  font-size: .78rem;
+  font-weight: 600;
+  color: var(--text-light);
+  margin-bottom: 4px;
+  display: block;
+}
+.refund-amount-input {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: .9rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+}
+.refund-amount-input:focus { border-color: var(--primary); }
+.refund-result {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: .85rem;
+  font-weight: 600;
+  margin: 12px 0 0;
+  text-align: center;
+}
+.refund-result.success { background: rgba(52,199,89,.12); color: var(--success); }
+.refund-result.error { background: rgba(255,59,48,.12); color: var(--danger); }
+.refund-result.processing { background: rgba(0,113,227,.08); color: var(--primary); }
+
+/* ============ Payment Method Modal ============ */
+.modal-paymethod { max-width: 400px; }
+.paymethod-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 16px 0;
+}
+.paymethod-btn {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  background: rgba(0,0,0,.04);
+  border: 1px solid rgba(0,0,0,.1);
+  border-radius: 10px;
+  color: #1d1d1f;
+  font-size: .95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .2s;
+}
+.paymethod-btn:hover { background: rgba(0,0,0,.08); border-color: var(--primary); }
+.paymethod-btn img {
+  width: 40px;
+  height: 28px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: #fff;
+  padding: 2px 4px;
+}
 
 /* ============ Responsive ============ */
 @media (max-width: 900px) {

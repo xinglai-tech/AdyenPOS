@@ -309,7 +309,7 @@ app.delete('/api/orders', (req, res) => {
 
 // --------------- API: Make Payment ---------------
 app.post('/api/payment', async (req, res) => {
-  const { amount, currency, items, useAsync, serviceId: clientServiceId } = req.body;
+  const { amount, currency, items, useAsync, serviceId: clientServiceId, allowedPaymentBrand } = req.body;
 
   const header = makeHeader('Payment');
   // Allow client to provide serviceId so it can issue cancel during sync wait
@@ -329,7 +329,8 @@ app.post('/api/payment', async (req, res) => {
     poiTransactionId: null,
     poiTimestamp: null,
     pspReference: null,
-    tenderReference: null
+    tenderReference: null,
+    refundedAmount: 0
   };
   orders.unshift(order);
   broadcastSSE('orderUpdate', order);
@@ -352,7 +353,12 @@ app.post('/api/payment', async (req, res) => {
           AmountsReq: {
             Currency: order.currency,
             RequestedAmount: amount
-          }
+          },
+          ...(allowedPaymentBrand ? {
+            TransactionConditions: {
+              AllowedPaymentBrand: [allowedPaymentBrand]
+            }
+          } : {})
         }
       }
     }
@@ -435,35 +441,103 @@ app.post('/api/cancel', async (req, res) => {
 
 // --------------- API: Referenced Refund ---------------
 app.post('/api/refund', async (req, res) => {
-  const { orderId } = req.body;
+  const { orderId, amount } = req.body;
   const order = orders.find(o => o.id === orderId);
 
-  if (!order || order.status !== 'paid') {
+  if (!order || (order.status !== 'paid' && order.status !== 'partially_refunded')) {
     return res.status(400).json({ error: 'Order not found or not eligible for refund' });
   }
   if (!order.poiTransactionId) {
     return res.status(400).json({ error: 'Missing POI transaction data for referenced refund' });
   }
+  const remaining = order.amount - (order.refundedAmount || 0);
+  if (amount > remaining) {
+    return res.status(400).json({ error: `Amount exceeds remaining refundable: ${remaining.toFixed(2)}` });
+  }
+
+  const reversalRequest = {
+    OriginalPOITransaction: {
+      POITransactionID: {
+        TransactionID: order.poiTransactionId,
+        TimeStamp: order.poiTimestamp
+      }
+    },
+    ReversalReason: 'MerchantCancel'
+  };
+
+  if (amount && amount < order.amount) {
+    reversalRequest.ReversedAmount = amount;
+  }
 
   const payload = {
     SaleToPOIRequest: {
       MessageHeader: makeHeader('Reversal'),
-      ReversalRequest: {
-        OriginalPOITransaction: {
-          POITransactionID: {
-            TransactionID: order.poiTransactionId,
-            TimeStamp: order.poiTimestamp
-          }
-        },
-        ReversalReason: 'MerchantCancel'
-      }
+      ReversalRequest: reversalRequest
     }
   };
 
   try {
     const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
     const result = data?.SaleToPOIResponse?.ReversalResponse?.Response?.Result;
-    order.status = result === 'Success' ? 'refunded' : 'refund_failed';
+    if (result === 'Success') {
+      order.refundedAmount = (order.refundedAmount || 0) + (amount || order.amount);
+      order.status = order.refundedAmount >= order.amount ? 'refunded' : 'partially_refunded';
+    } else {
+      order.status = 'refund_failed';
+    }
+    order.refundResponse = data;
+    broadcastSSE('orderUpdate', order);
+    res.json({ order, adyenResponse: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --------------- API: Unreferenced Refund ---------------
+app.post('/api/refund/unreferenced', async (req, res) => {
+  const { orderId, amount } = req.body;
+  const order = orders.find(o => o.id === orderId);
+
+  if (!order || (order.status !== 'paid' && order.status !== 'partially_refunded')) {
+    return res.status(400).json({ error: 'Order not found or not eligible for refund' });
+  }
+  const remaining = order.amount - (order.refundedAmount || 0);
+  if (amount > remaining) {
+    return res.status(400).json({ error: `Amount exceeds remaining refundable: ${remaining.toFixed(2)}` });
+  }
+
+  const payload = {
+    SaleToPOIRequest: {
+      MessageHeader: makeHeader('Payment'),
+      PaymentRequest: {
+        SaleData: {
+          SaleTransactionID: {
+            TransactionID: uuidv4(),
+            TimeStamp: new Date().toISOString()
+          }
+        },
+        PaymentTransaction: {
+          AmountsReq: {
+            Currency: order.currency || process.env.CURRENCY || 'EUR',
+            RequestedAmount: amount
+          }
+        },
+        PaymentData: {
+          PaymentType: 'Refund'
+        }
+      }
+    }
+  };
+
+  try {
+    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
+    const result = data?.SaleToPOIResponse?.PaymentResponse?.Response?.Result;
+    if (result === 'Success') {
+      order.refundedAmount = (order.refundedAmount || 0) + amount;
+      order.status = order.refundedAmount >= order.amount ? 'refunded' : 'partially_refunded';
+    } else {
+      order.status = 'refund_failed';
+    }
     order.refundResponse = data;
     broadcastSSE('orderUpdate', order);
     res.json({ order, adyenResponse: data });
