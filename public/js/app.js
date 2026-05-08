@@ -241,10 +241,32 @@ function setupSSE() {
     updateTerminalDisplay(data);
   });
 
+  // User activity presence
+  const $actBanner = document.getElementById('activity-banner');
+  const $actText = document.getElementById('activity-banner-text');
+  let _actHideTimer = null;
+  es.addEventListener('userActivity', (e) => {
+    const data = JSON.parse(e.data);
+    const mySession = state.config.sessionId || '';
+    if (!mySession || data.sessionId === mySession) return;
+    $actText.textContent = 'Another used this POS app in last 30 seconds, please kindly wait until this banner disappears.';
+    $actBanner.classList.remove('hidden');
+    clearTimeout(_actHideTimer);
+    _actHideTimer = setTimeout(() => $actBanner.classList.add('hidden'), 30000);
+  });
+
   es.onerror = () => {
     console.warn('SSE connection lost, reconnecting...');
   };
 }
+
+// Debounced activity ping
+let _actPingTimer = null;
+document.addEventListener('click', () => {
+  if (_actPingTimer) return;
+  _actPingTimer = setTimeout(() => { _actPingTimer = null; }, 10000);
+  fetch('/api/activity', { method: 'POST', headers: { 'Content-Type': 'application/json' } }).catch(() => {});
+});
 
 // ====================== Terminal Display ======================
 const EVENT_DISPLAY = {

@@ -895,6 +895,23 @@ html, body {
   font-size: .85rem;
 }
 
+/* ============ Activity Banner ============ */
+.activity-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  background: #fff3cd;
+  color: #856404;
+  text-align: center;
+  padding: 8px 16px;
+  font-size: .82rem;
+  font-weight: 600;
+  border-bottom: 1px solid #ffc107;
+  transition: opacity .3s;
+}
+
 /* ============ Scrollbar ============ */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

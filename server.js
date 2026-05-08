@@ -168,13 +168,23 @@ async function adyenRequest(endpoint, body) {
 }
 
 // --------------- API: Config (expose non-secret config to frontend) ---------------
-app.get('/api/config', (_req, res) => {
+app.get('/api/config', (req, res) => {
   res.json({
     poiId: activePoiId,
     saleId: process.env.ADYEN_SALE_ID || 'POSWebApp',
     merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT || '',
-    currency: process.env.CURRENCY || 'EUR'
+    currency: process.env.CURRENCY || 'EUR',
+    username: req.session.user || '',
+    sessionId: req.sessionID || ''
   });
+});
+
+// --------------- API: User Activity (presence) ---------------
+app.post('/api/activity', (req, res) => {
+  const username = req.session.user || 'unknown';
+  const sessionId = req.sessionID || '';
+  broadcastSSE('userActivity', { username, sessionId, timestamp: Date.now() });
+  res.json({ ok: true });
 });
 
 // --------------- API: Orders ---------------
