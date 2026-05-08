@@ -249,7 +249,7 @@ function setupSSE() {
     const data = JSON.parse(e.data);
     const mySession = state.config.sessionId || '';
     if (!mySession || data.sessionId === mySession) return;
-    $actText.textContent = 'Another used this POS app in last 30 seconds, please kindly wait until this banner disappears.';
+    $actText.textContent = 'Another user has used this POS app in last 30 seconds, please kindly wait and don\'t click anywhere until this banner disappear';
     $actBanner.classList.remove('hidden');
     clearTimeout(_actHideTimer);
     _actHideTimer = setTimeout(() => $actBanner.classList.add('hidden'), 30000);
