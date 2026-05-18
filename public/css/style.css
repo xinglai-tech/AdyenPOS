@@ -755,7 +755,7 @@ html, body {
 }
 .terminal-display-block:last-child { border-bottom: none; }
 .terminal-display-label {
-  font-size: 1.1rem;
+  font-size: .85rem;
   font-weight: 600;
   color: var(--primary);
   font-family: 'SF Mono', ui-monospace, monospace;

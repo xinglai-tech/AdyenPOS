@@ -371,9 +371,8 @@ function renderTerminalDisplay() {
   $terminalDisplay.innerHTML = activeEntries.map(k => {
     const ts = _termDisplayState[k];
     const label = k === '_default' ? '' : `<div class="terminal-display-label">${k}</div>`;
-    const txn = ts.txnId ? `<div class="terminal-display-txnid">Tender: ${ts.txnId}</div>` : '';
     const body = (ts.lines || []).map(l => `<div class="terminal-display-line">${l}</div>`).join('');
-    return `<div class="terminal-display-block">${label}${txn}${body}</div>`;
+    return `<div class="terminal-display-block">${label}${body}</div>`;
   }).join('');
 }
 
