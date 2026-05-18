@@ -338,22 +338,13 @@ function updateTerminalDisplay(data) {
 
   ts.lines = lines;
 
-  // Clear on final events quickly
+  clearTimeout(ts.clearTimer);
   if (isFinal) {
-    clearTimeout(ts.clearTimer);
     ts.clearTimer = setTimeout(() => {
       ts.txnId = null;
       ts.lines = null;
       renderTerminalDisplay();
     }, 5000);
-  } else {
-    // Fallback: auto-clear after 10s of no new events
-    clearTimeout(ts.clearTimer);
-    ts.clearTimer = setTimeout(() => {
-      ts.txnId = null;
-      ts.lines = null;
-      renderTerminalDisplay();
-    }, 10000);
   }
 
   renderTerminalDisplay();
@@ -374,6 +365,14 @@ function renderTerminalDisplay() {
     const body = (ts.lines || []).map(l => `<div class="terminal-display-line">${l}</div>`).join('');
     return `<div class="terminal-display-block">${label}${body}</div>`;
   }).join('');
+}
+
+function clearTerminalDisplay() {
+  for (const k of Object.keys(_termDisplayState)) {
+    clearTimeout(_termDisplayState[k].clearTimer);
+    delete _termDisplayState[k];
+  }
+  $terminalDisplay.innerHTML = '<span class="terminal-display-idle">Idle</span>';
 }
 
 // ====================== Products ======================
@@ -1224,6 +1223,7 @@ function bindEvents() {
   $paymethodModal.querySelectorAll('.paymethod-btn').forEach(btn => {
     btn.addEventListener('click', () => processPayment(btn.dataset.brand || ''));
   });
+  document.getElementById('btn-clear-display').addEventListener('click', clearTerminalDisplay);
   $btnClearOrders.addEventListener('click', clearOrders);
   $orderSearch.addEventListener('input', () => renderOrders());
   $btnClearResp.addEventListener('click', () => { $apiResponse.innerHTML = '<span class="log-empty">No response yet</span>'; });
