@@ -338,12 +338,22 @@ function updateTerminalDisplay(data) {
 
   ts.lines = lines;
 
+  // Clear on final events quickly
   if (isFinal) {
+    clearTimeout(ts.clearTimer);
     ts.clearTimer = setTimeout(() => {
       ts.txnId = null;
       ts.lines = null;
       renderTerminalDisplay();
     }, 5000);
+  } else {
+    // Fallback: auto-clear after 10s of no new events
+    clearTimeout(ts.clearTimer);
+    ts.clearTimer = setTimeout(() => {
+      ts.txnId = null;
+      ts.lines = null;
+      renderTerminalDisplay();
+    }, 10000);
   }
 
   renderTerminalDisplay();
