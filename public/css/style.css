@@ -307,21 +307,83 @@ html, body {
   letter-spacing: .3px;
   margin-bottom: 6px;
 }
-.settings-terminal-row {
+.terminal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.terminal-empty {
+  font-size: .72rem;
+  color: var(--muted);
+  padding: 6px 0;
+}
+.terminal-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #fff;
+  transition: all .15s;
 }
-.settings-terminal-row .terminal-id {
-  font-size: .65rem;
-  word-break: break-all;
+.terminal-item.active {
+  border-color: var(--primary);
+  background: #fff;
 }
-.settings-terminal-actions {
+.terminal-select-btn {
   display: flex;
+  align-items: center;
   gap: 6px;
+  flex: 1;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 0;
+  min-width: 0;
 }
+.terminal-radio {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  flex-shrink: 0;
+  transition: all .15s;
+}
+.terminal-radio.checked {
+  border-color: var(--primary);
+  background: var(--primary);
+  box-shadow: inset 0 0 0 2px #fff;
+}
+.terminal-status-dot {
+  font-size: .7rem;
+  font-weight: 600;
+  letter-spacing: .3px;
+  flex-shrink: 0;
+}
+.terminal-status-dot.online { color: var(--success); }
+.terminal-status-dot.offline { color: var(--danger); }
+.terminal-poi-id {
+  font-size: .72rem;
+  font-family: 'SF Mono', ui-monospace, monospace;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.terminal-delete-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: .7rem;
+  padding: 2px 4px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  transition: all .15s;
+}
+.terminal-delete-btn:hover { color: var(--danger); background: rgba(255,59,48,.1); }
 .settings-buttons {
   display: flex;
   flex-direction: column;
@@ -686,6 +748,18 @@ html, body {
 .terminal-display-idle {
   font-size: 1.1rem;
   color: rgba(0,0,0,.3);
+}
+.terminal-display-block {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(0,0,0,.06);
+}
+.terminal-display-block:last-child { border-bottom: none; }
+.terminal-display-label {
+  font-size: .65rem;
+  font-weight: 600;
+  color: var(--primary);
+  font-family: 'SF Mono', ui-monospace, monospace;
+  margin-bottom: 2px;
 }
 .terminal-display-txnid {
   font-size: .75rem;

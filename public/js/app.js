@@ -125,15 +125,14 @@ const $cartTotal       = document.getElementById('cart-total-amount');
 const $btnPay          = document.getElementById('btn-pay');
 const $btnClearCart     = document.getElementById('btn-clear-cart');
 const $btnCheckTerm    = document.getElementById('btn-check-terminal');
-const $terminalStatus  = document.getElementById('terminal-status');
-const $terminalId      = document.getElementById('terminal-id');
-const $btnSwitchTerm   = document.getElementById('btn-switch-terminal');
-const $switchModal     = document.getElementById('switch-modal');
+const $terminalList    = document.getElementById('terminal-list');
+const $btnAddTerm      = document.getElementById('btn-add-terminal');
+const $addTermModal    = document.getElementById('add-terminal-modal');
 const $inputPoiId      = document.getElementById('input-poi-id');
-const $switchCurrentId = document.getElementById('switch-modal-current-id');
-const $switchError     = document.getElementById('switch-modal-error');
-const $btnSwitchOk     = document.getElementById('btn-switch-confirm');
-const $btnSwitchCancel = document.getElementById('btn-switch-cancel');
+const $addTermCount    = document.getElementById('add-terminal-count');
+const $addTermError    = document.getElementById('add-terminal-error');
+const $btnAddOk        = document.getElementById('btn-add-confirm');
+const $btnAddCancel    = document.getElementById('btn-add-cancel');
 const $toggleAsync     = document.getElementById('toggle-async');
 const $orderList       = document.getElementById('order-list');
 const $orderCount      = document.getElementById('order-count');
@@ -174,13 +173,14 @@ function tryRecoverPending() {
 
 document.addEventListener('DOMContentLoaded', async () => {
   await loadConfig();
+  renderTerminals();
   renderProducts();
   renderCart();
   $toggleAsync.checked = state.isAsync;
   document.getElementById('terminal-display').style.display = state.isAsync ? '' : 'none';
   setupSSE();
   bindEvents();
-  checkTerminal();
+  if (state.config.poiId) checkTerminal();
 });
 
 async function loadConfig() {
@@ -241,6 +241,11 @@ function setupSSE() {
     updateTerminalDisplay(data);
   });
 
+  es.addEventListener('terminalUpdate', (e) => {
+    state.config.terminals = JSON.parse(e.data);
+    renderTerminals();
+  });
+
   // User activity presence
   const $actBanner = document.getElementById('activity-banner');
   const $actText = document.getElementById('activity-banner-text');
@@ -296,21 +301,24 @@ const EVENT_DISPLAY = {
   'CARD_DETAILS_PROVIDED': 'Card details entered',
 };
 
-let _currentTxnId = null;
-let _displayClearTimeout = null;
+const _termDisplayState = {}; // { poiId: { txnId, clearTimer } }
 
 function updateTerminalDisplay(data) {
   if (!state.isAsync) return;
-  const { events } = data;
+  const { events, poiId } = data;
   if (!events || events.length === 0) return;
+
+  const key = poiId || '_default';
+  if (!_termDisplayState[key]) _termDisplayState[key] = { txnId: null, clearTimer: null };
+  const ts = _termDisplayState[key];
 
   let isFinal = false;
 
   for (const e of events) {
     if (e.type !== 'event') continue;
     if (e.event === 'TENDER_CREATED' && e.transactionId) {
-      _currentTxnId = e.transactionId;
-      clearTimeout(_displayClearTimeout);
+      ts.txnId = e.transactionId;
+      clearTimeout(ts.clearTimer);
     }
     if (e.event === 'TENDER_FINAL' || e.event === 'CARD_REMOVED') {
       isFinal = true;
@@ -328,21 +336,35 @@ function updateTerminalDisplay(data) {
     return e.text || '';
   }).filter(Boolean);
 
-  let html = '';
-  if (_currentTxnId) {
-    html += `<div class="terminal-display-txnid">Tender reference: ${_currentTxnId}</div>`;
-  }
-  html += lines.map(l =>
-    `<div class="terminal-display-line">${l}</div>`
-  ).join('');
-  $terminalDisplay.innerHTML = html;
+  ts.lines = lines;
 
   if (isFinal) {
-    _displayClearTimeout = setTimeout(() => {
-      _currentTxnId = null;
-      $terminalDisplay.innerHTML = '<span class="terminal-display-idle">Idle</span>';
+    ts.clearTimer = setTimeout(() => {
+      ts.txnId = null;
+      ts.lines = null;
+      renderTerminalDisplay();
     }, 5000);
   }
+
+  renderTerminalDisplay();
+}
+
+function renderTerminalDisplay() {
+  const keys = Object.keys(_termDisplayState);
+  const activeEntries = keys.filter(k => _termDisplayState[k].lines && _termDisplayState[k].lines.length > 0);
+
+  if (activeEntries.length === 0) {
+    $terminalDisplay.innerHTML = '<span class="terminal-display-idle">Idle</span>';
+    return;
+  }
+
+  $terminalDisplay.innerHTML = activeEntries.map(k => {
+    const ts = _termDisplayState[k];
+    const label = k === '_default' ? '' : `<div class="terminal-display-label">${k}</div>`;
+    const txn = ts.txnId ? `<div class="terminal-display-txnid">Tender: ${ts.txnId}</div>` : '';
+    const body = (ts.lines || []).map(l => `<div class="terminal-display-line">${l}</div>`).join('');
+    return `<div class="terminal-display-block">${label}${txn}${body}</div>`;
+  }).join('');
 }
 
 // ====================== Products ======================
@@ -436,7 +458,7 @@ function renderOrders() {
     ? state.orders.filter(o =>
         (o.serviceId || '').toLowerCase().includes(query) ||
         (o.pspReference || '').toLowerCase().includes(query) ||
-        (o.tenderReference || '').toLowerCase().includes(query) ||
+        (o.terminalId || '').toLowerCase().includes(query) ||
         (o.poiTransactionId || '').toLowerCase().includes(query))
     : state.orders;
 
@@ -460,8 +482,7 @@ function renderOrders() {
         </div>
         ${o.failureReason ? `<div class="order-card-reason">${o.failureReason}</div>` : ''}
         ${o.pspReference ? `<div class="order-card-psp">PSP: ${o.pspReference}</div>` : ''}
-        ${o.tenderReference ? `<div class="order-card-psp">Tender: ${o.tenderReference}</div>` : ''}
-        ${o.poiTransactionId ? `<div class="order-card-psp">Tender reference: ${o.poiTransactionId.split('.')[0]}</div>` : ''}
+        ${o.terminalId ? `<div class="order-card-psp">Terminal: ${o.terminalId}</div>` : ''}
         ${o.paymentBrand ? `<div class="order-card-psp">Payment method: ${formatBrand(o.paymentBrand)}</div>` : ''}
         <div class="order-card-items">${itemsSummary || 'No items'}</div>
         <div class="order-card-footer">
@@ -499,99 +520,159 @@ function formatBrand(brand) {
   return map[brand?.toLowerCase()] || brand;
 }
 
-// ====================== Terminal Check ======================
-async function checkTerminal() {
-  $terminalStatus.className = 'terminal-status checking';
-  $terminalStatus.textContent = 'Checking...';
-  $terminalId.textContent = '';
-
-  try {
-    const res = await fetch('/api/terminals', { method: 'POST' });
-    const data = await res.json();
-
-    showApiResponse('Connected Terminals', data);
-    const terminals = data.uniqueTerminalIds || [];
-    if (terminals.length > 0) {
-      state.terminalOnline = true;
-      $terminalStatus.className = 'terminal-status online';
-      $terminalStatus.textContent = 'Online';
-      $terminalId.textContent = terminals.join(', ');
-      showToast(`${terminals.length} terminal(s) connected`, 'success');
-      _terminalReady = true;
-      tryRecoverPending();
-    } else {
-      state.terminalOnline = false;
-      $terminalStatus.className = 'terminal-status offline';
-      $terminalStatus.textContent = 'No terminals';
-      showToast('No terminals found', 'warning');
-    }
-  } catch (err) {
+// ====================== Terminal List ======================
+function renderTerminals() {
+  const list = state.config.terminals || [];
+  if (list.length === 0) {
+    $terminalList.innerHTML = '<div class="terminal-empty">No terminals added</div>';
     state.terminalOnline = false;
-    $terminalStatus.className = 'terminal-status offline';
-    $terminalStatus.textContent = 'Error';
-    showToast(`Terminal check failed: ${err.message}`, 'error');
+    renderProducts();
+    renderOrders();
+    return;
   }
+  const onlineSet = state._terminalOnlineSet || new Set();
+  $terminalList.innerHTML = list.map(t => {
+    const online = onlineSet.has(t.poiId);
+    const checked = state._terminalChecked;
+    return `
+    <div class="terminal-item ${t.active ? 'active' : ''}">
+      <button class="terminal-select-btn" onclick="selectTerminal('${t.poiId}')" title="Set as active">
+        <span class="terminal-radio ${t.active ? 'checked' : ''}"></span>
+        <span class="terminal-poi-id">${t.poiId}</span>
+        ${checked ? `<span class="terminal-status-dot ${online ? 'online' : 'offline'}">${online ? 'Online' : 'Offline'}</span>` : ''}
+      </button>
+      <button class="terminal-delete-btn" onclick="deleteTerminal('${t.poiId}')" title="Remove">✕</button>
+    </div>`;
+  }).join('');
+  const active = list.find(t => t.active);
+  state.config.poiId = active ? active.poiId : '';
+  state.terminalOnline = !!active;
   renderProducts();
   renderOrders();
 }
 
-// ====================== Switch Terminal ======================
-function openSwitchModal() {
-  $switchCurrentId.textContent = state.config.poiId || '—';
-  $inputPoiId.value = state.config.poiId || '';
-  $switchError.classList.add('hidden');
-  $switchModal.classList.remove('hidden');
-  setTimeout(() => $inputPoiId.focus(), 100);
+async function selectTerminal(poiId) {
+  try {
+    const res = await fetch('/api/terminal/select', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ poiId })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      state.config.terminals = data.terminals;
+      renderTerminals();
+      showToast(`Active: ${poiId}`, 'success');
+    }
+  } catch (err) {
+    showToast(`Select failed: ${err.message}`, 'error');
+  }
 }
 
-function closeSwitchModal() {
-  $switchModal.classList.add('hidden');
+async function deleteTerminal(poiId) {
+  try {
+    const res = await fetch('/api/terminal/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ poiId })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      state.config.terminals = data.terminals;
+      renderTerminals();
+      showToast(`Removed ${poiId}`, 'info');
+    }
+  } catch (err) {
+    showToast(`Delete failed: ${err.message}`, 'error');
+  }
 }
 
-async function confirmSwitch() {
-  const newPoiId = $inputPoiId.value.trim();
-  if (!newPoiId) {
-    $switchError.textContent = 'Please enter a Terminal ID';
-    $switchError.classList.remove('hidden');
+// ====================== Terminal Check ======================
+async function checkTerminal() {
+  const list = state.config.terminals || [];
+  if (list.length === 0) {
+    showToast('No terminals to check', 'warning');
     return;
   }
 
-  $switchError.classList.add('hidden');
-  $btnSwitchOk.disabled = true;
-  $btnSwitchOk.textContent = 'Connecting...';
+  try {
+    const res = await fetch('/api/terminals', { method: 'POST' });
+    const data = await res.json();
+    showApiResponse('Connected Terminals', data);
+    const onlineList = data.uniqueTerminalIds || [];
+    state._terminalOnlineSet = new Set(onlineList);
+    state._terminalChecked = true;
+
+    const activePoiId = state.config.poiId;
+    state.terminalOnline = onlineList.includes(activePoiId);
+
+    const onlineCount = list.filter(t => onlineList.includes(t.poiId)).length;
+    showToast(`${onlineCount}/${list.length} terminal(s) online`, onlineCount > 0 ? 'success' : 'warning');
+
+    if (state.terminalOnline) {
+      _terminalReady = true;
+      tryRecoverPending();
+    }
+  } catch (err) {
+    state.terminalOnline = false;
+    state._terminalOnlineSet = new Set();
+    showToast(`Terminal check failed: ${err.message}`, 'error');
+  }
+  renderTerminals();
+}
+
+// ====================== Add Terminal ======================
+function openAddTerminalModal() {
+  const list = state.config.terminals || [];
+  const max = state.config.maxTerminals || 5;
+  $addTermCount.textContent = `${list.length} / ${max} terminals`;
+  $inputPoiId.value = '';
+  $addTermError.classList.add('hidden');
+  $addTermModal.classList.remove('hidden');
+  setTimeout(() => $inputPoiId.focus(), 100);
+}
+
+function closeAddTerminalModal() {
+  $addTermModal.classList.add('hidden');
+}
+
+async function confirmAddTerminal() {
+  const newPoiId = $inputPoiId.value.trim();
+  if (!newPoiId) {
+    $addTermError.textContent = 'Please enter a Terminal ID';
+    $addTermError.classList.remove('hidden');
+    return;
+  }
+
+  $addTermError.classList.add('hidden');
+  $btnAddOk.disabled = true;
+  $btnAddOk.textContent = 'Adding...';
 
   try {
-    const res = await fetch('/api/switch-terminal', {
+    const res = await fetch('/api/terminal/add', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ poiId: newPoiId })
     });
     const data = await res.json();
-    showApiResponse('Switch Terminal', data);
+    showApiResponse('Add Terminal', data);
 
     if (!res.ok) {
-      $switchError.textContent = data.error || 'Switch failed';
-      $switchError.classList.remove('hidden');
+      $addTermError.textContent = data.error || 'Add failed';
+      $addTermError.classList.remove('hidden');
       return;
     }
 
-    // Update local config
-    state.config.poiId = data.poiId;
-    state.terminalOnline = true;
-    $terminalStatus.className = 'terminal-status online';
-    $terminalStatus.textContent = 'Online';
-    $terminalId.textContent = data.poiId;
-
-    closeSwitchModal();
-    renderProducts();
-    renderOrders();
-    showToast(`Switched to ${data.poiId}`, 'success');
+    state.config.terminals = data.terminals;
+    renderTerminals();
+    closeAddTerminalModal();
+    showToast(`Added ${newPoiId}`, 'success');
   } catch (err) {
-    $switchError.textContent = `Connection error: ${err.message}`;
-    $switchError.classList.remove('hidden');
+    $addTermError.textContent = `Error: ${err.message}`;
+    $addTermError.classList.remove('hidden');
   } finally {
-    $btnSwitchOk.disabled = false;
-    $btnSwitchOk.textContent = 'Connect';
+    $btnAddOk.disabled = false;
+    $btnAddOk.textContent = 'Add';
   }
 }
 
@@ -1126,10 +1207,10 @@ function bindEvents() {
   $btnClearCart.addEventListener('click', clearCart);
   $btnPay.addEventListener('click', initiatePayment);
   $btnCheckTerm.addEventListener('click', checkTerminal);
-  $btnSwitchTerm.addEventListener('click', openSwitchModal);
-  $btnSwitchOk.addEventListener('click', confirmSwitch);
-  $btnSwitchCancel.addEventListener('click', closeSwitchModal);
-  $inputPoiId.addEventListener('keydown', (e) => { if (e.key === 'Enter') confirmSwitch(); });
+  $btnAddTerm.addEventListener('click', openAddTerminalModal);
+  $btnAddOk.addEventListener('click', confirmAddTerminal);
+  $btnAddCancel.addEventListener('click', closeAddTerminalModal);
+  $inputPoiId.addEventListener('keydown', (e) => { if (e.key === 'Enter') confirmAddTerminal(); });
   $btnPaymethodCancel.addEventListener('click', closePaymethodModal);
   $paymethodModal.querySelectorAll('.paymethod-btn').forEach(btn => {
     btn.addEventListener('click', () => processPayment(btn.dataset.brand || ''));

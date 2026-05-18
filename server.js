@@ -10,7 +10,15 @@ const PORT = process.env.PORT || 3000;
 // --------------- In-memory storage (swap to Azure Storage later) ---------------
 let orders = [];
 let sseClients = [];
-let activePoiId = process.env.ADYEN_TERMINAL_POIID || '';
+const MAX_TERMINALS = 5;
+let terminals = process.env.ADYEN_TERMINAL_POIID
+  ? [{ poiId: process.env.ADYEN_TERMINAL_POIID, active: true }]
+  : [];
+
+function getActivePoiId() {
+  const t = terminals.find(t => t.active);
+  return t ? t.poiId : '';
+}
 
 // --------------- Auth config ---------------
 const AUTH_USERS = (process.env.AUTH_USERS || 'admin:admin').split(',').map(pair => {
@@ -145,7 +153,7 @@ function makeHeader(category, messageType = 'Request') {
     MessageType: messageType,
     ServiceID: uuidv4().replace(/-/g, '').slice(0, 10),
     SaleID: process.env.ADYEN_SALE_ID || 'POSWebApp',
-    POIID: activePoiId
+    POIID: getActivePoiId()
   };
 }
 
@@ -170,7 +178,9 @@ async function adyenRequest(endpoint, body) {
 // --------------- API: Config (expose non-secret config to frontend) ---------------
 app.get('/api/config', (req, res) => {
   res.json({
-    poiId: activePoiId,
+    poiId: getActivePoiId(),
+    terminals,
+    maxTerminals: MAX_TERMINALS,
     saleId: process.env.ADYEN_SALE_ID || 'POSWebApp',
     merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT || '',
     currency: process.env.CURRENCY || 'EUR',
@@ -210,33 +220,64 @@ app.get('/api/events', (req, res) => {
   });
 });
 
-// --------------- API: Switch Terminal ---------------
-app.post('/api/switch-terminal', async (req, res) => {
+// --------------- API: Add Terminal ---------------
+app.post('/api/terminal/add', async (req, res) => {
   const { poiId } = req.body;
   if (!poiId || !poiId.trim()) {
     return res.status(400).json({ error: 'Terminal ID is required' });
   }
+  const id = poiId.trim();
+  if (terminals.find(t => t.poiId === id)) {
+    return res.status(400).json({ error: 'Terminal already added' });
+  }
+  if (terminals.length >= MAX_TERMINALS) {
+    return res.status(400).json({ error: `Maximum ${MAX_TERMINALS} terminals. Please remove one first.` });
+  }
 
   try {
-    // Check if the terminal is in the connected list
     const data = await adyenRequest(
       'https://terminal-api-test.adyen.com/connectedTerminals',
       { merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT || '' }
     );
-    const terminals = data.uniqueTerminalIds || [];
-    if (!terminals.includes(poiId.trim())) {
-      return res.status(404).json({ error: `Terminal ${poiId} is not online`, terminals });
+    const onlineList = data.uniqueTerminalIds || [];
+    if (!onlineList.includes(id)) {
+      return res.status(404).json({ error: `Terminal ${id} is not online`, terminals: onlineList });
     }
 
-    // Switch and clear pending orders
-    activePoiId = poiId.trim();
-    orders = orders.filter(o => o.status !== 'pending');
-    broadcastSSE('init', orders);
-
-    res.json({ success: true, poiId: activePoiId, terminals });
+    const isFirst = terminals.length === 0;
+    terminals.push({ poiId: id, active: isFirst });
+    broadcastSSE('terminalUpdate', terminals);
+    res.json({ success: true, terminals });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// --------------- API: Delete Terminal ---------------
+app.post('/api/terminal/delete', (req, res) => {
+  const { poiId } = req.body;
+  const idx = terminals.findIndex(t => t.poiId === poiId);
+  if (idx < 0) return res.status(404).json({ error: 'Terminal not found' });
+
+  const wasActive = terminals[idx].active;
+  terminals.splice(idx, 1);
+  if (wasActive && terminals.length > 0) {
+    terminals[0].active = true;
+  }
+  broadcastSSE('terminalUpdate', terminals);
+  res.json({ success: true, terminals });
+});
+
+// --------------- API: Select Active Terminal ---------------
+app.post('/api/terminal/select', (req, res) => {
+  const { poiId } = req.body;
+  const target = terminals.find(t => t.poiId === poiId);
+  if (!target) return res.status(404).json({ error: 'Terminal not found' });
+
+  terminals.forEach(t => t.active = false);
+  target.active = true;
+  broadcastSSE('terminalUpdate', terminals);
+  res.json({ success: true, terminals });
 });
 
 // --------------- API: Connected Terminals ---------------
@@ -255,10 +296,15 @@ app.post('/api/terminals', async (_req, res) => {
 // --------------- API: Transaction Status ---------------
 app.post('/api/transaction-status', async (req, res) => {
   const { serviceId } = req.body;
+  const order = orders.find(o => o.serviceId === serviceId);
+  const poiId = (order && order.terminalId) || getActivePoiId();
+
+  const header = makeHeader('TransactionStatus');
+  header.POIID = poiId;
 
   const payload = {
     SaleToPOIRequest: {
-      MessageHeader: makeHeader('TransactionStatus'),
+      MessageHeader: header,
       TransactionStatusRequest: {
         ReceiptReprintFlag: true,
         DocumentQualifier: ['CashierReceipt', 'CustomerReceipt'],
@@ -266,7 +312,7 @@ app.post('/api/transaction-status', async (req, res) => {
           MessageCategory: 'Payment',
           ServiceID: serviceId,
           SaleID: process.env.ADYEN_SALE_ID || 'POSWebApp',
-          POIID: activePoiId
+          POIID: poiId
         }
       }
     }
@@ -340,6 +386,7 @@ app.post('/api/payment', async (req, res) => {
     poiTimestamp: null,
     pspReference: null,
     tenderReference: null,
+    terminalId: getActivePoiId(),
     refundedAmount: 0
   };
   orders.unshift(order);
@@ -418,17 +465,22 @@ app.post('/api/payment', async (req, res) => {
 // --------------- API: Cancel (Abort) Payment ---------------
 app.post('/api/cancel', async (req, res) => {
   const { serviceId } = req.body;
+  const order = orders.find(o => o.serviceId === serviceId);
+  const poiId = (order && order.terminalId) || getActivePoiId();
+
+  const header = makeHeader('Abort');
+  header.POIID = poiId;
 
   const payload = {
     SaleToPOIRequest: {
-      MessageHeader: makeHeader('Abort'),
+      MessageHeader: header,
       AbortRequest: {
         AbortReason: 'MerchantAbort',
         MessageReference: {
           MessageCategory: 'Payment',
           ServiceID: serviceId,
           SaleID: process.env.ADYEN_SALE_ID || 'POSWebApp',
-          POIID: activePoiId
+          POIID: poiId
         }
       }
     }
@@ -437,11 +489,11 @@ app.post('/api/cancel', async (req, res) => {
   try {
     const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
 
-    const order = orders.find(o => o.serviceId === serviceId);
-    if (order) {
-      order.status = 'cancelled';
-      order.cancelResponse = data;
-      broadcastSSE('orderUpdate', order);
+    const cancelledOrder = orders.find(o => o.serviceId === serviceId);
+    if (cancelledOrder) {
+      cancelledOrder.status = 'cancelled';
+      cancelledOrder.cancelResponse = data;
+      broadcastSSE('orderUpdate', cancelledOrder);
     }
     res.json(data);
   } catch (err) {
@@ -479,9 +531,11 @@ app.post('/api/refund', async (req, res) => {
     reversalRequest.ReversedAmount = amount;
   }
 
+  const refundHeader = makeHeader('Reversal');
+
   const payload = {
     SaleToPOIRequest: {
-      MessageHeader: makeHeader('Reversal'),
+      MessageHeader: refundHeader,
       ReversalRequest: reversalRequest
     }
   };
@@ -516,9 +570,11 @@ app.post('/api/refund/unreferenced', async (req, res) => {
     return res.status(400).json({ error: `Amount exceeds remaining refundable: ${remaining.toFixed(2)}` });
   }
 
+  const unrefHeader = makeHeader('Payment');
+
   const payload = {
     SaleToPOIRequest: {
-      MessageHeader: makeHeader('Payment'),
+      MessageHeader: unrefHeader,
       PaymentRequest: {
         SaleData: {
           SaleTransactionID: {
@@ -693,11 +749,13 @@ app.post('/api/display', (req, res) => {
 
     const device = outputs[0]?.Device || 'CashierDisplay';
     const infoQualify = outputs[0]?.InfoQualify || 'Status';
+    const poiId = body?.SaleToPOIRequest?.MessageHeader?.POIID || '';
 
     broadcastSSE('displayNotification', {
       events,
       device,
-      infoQualify
+      infoQualify,
+      poiId
     });
   }
 

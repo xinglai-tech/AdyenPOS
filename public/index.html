@@ -43,18 +43,15 @@
             <section id="settings-section">
               <h3 class="section-title">Settings</h3>
               <div class="settings-inner">
-                <!-- Terminal -->
+                <!-- Terminal List -->
                 <div class="settings-group">
-                  <div class="settings-label">Terminal</div>
-                  <div class="settings-terminal-row">
-                    <span id="terminal-status" class="terminal-status offline">Offline</span>
-                    <span id="terminal-id" class="terminal-id"></span>
-                  </div>
+                  <div class="settings-label">Terminals</div>
+                  <div id="terminal-list" class="terminal-list"></div>
                 </div>
                 <!-- Action buttons -->
                 <div class="settings-buttons">
                   <button id="btn-check-terminal" class="btn btn-outline settings-btn">Check terminal status</button>
-                  <button id="btn-switch-terminal" class="btn btn-outline settings-btn">Switch terminal</button>
+                  <button id="btn-add-terminal" class="btn btn-outline settings-btn">Add terminal</button>
                   <div class="settings-label" style="align-self:flex-start">Debug</div>
                   <button id="btn-toggle-log" class="btn btn-outline settings-btn">Show API response</button>
                 </div>
@@ -164,20 +161,18 @@
     </div>
   </div>
 
-  <!-- ==================== Switch Terminal Modal ==================== -->
-  <div id="switch-modal" class="overlay hidden">
+  <!-- ==================== Add Terminal Modal ==================== -->
+  <div id="add-terminal-modal" class="overlay hidden">
     <div class="overlay-content switch-modal-content">
-      <h3 class="overlay-title">Switch Terminal</h3>
+      <h3 class="overlay-title">Add Terminal</h3>
       <p class="switch-modal-notice">Please assign your own terminal to the store - <strong>TechsupportPOS</strong> under company account - <strong>AdyenTechSupport</strong> before connecting.</p>
-      <p class="switch-modal-desc">Enter the Terminal ID (POIID) to connect to a different device.</p>
-      <div class="switch-modal-current">
-        Current: <span id="switch-modal-current-id">—</span>
-      </div>
+      <p class="switch-modal-desc">Enter the Terminal ID (POIID) to add.</p>
+      <p id="add-terminal-count" class="switch-modal-current"></p>
       <input type="text" id="input-poi-id" class="input-poi" placeholder="e.g. V400m-123456789" autocomplete="off" />
-      <p id="switch-modal-error" class="switch-modal-error hidden"></p>
+      <p id="add-terminal-error" class="switch-modal-error hidden"></p>
       <div class="overlay-actions">
-        <button id="btn-switch-confirm" class="btn btn-primary">Connect</button>
-        <button id="btn-switch-cancel" class="btn btn-outline">Cancel</button>
+        <button id="btn-add-confirm" class="btn btn-primary">Add</button>
+        <button id="btn-add-cancel" class="btn btn-outline">Cancel</button>
       </div>
     </div>
   </div>
