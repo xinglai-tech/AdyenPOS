@@ -745,10 +745,24 @@ html, body {
   flex-direction: column;
   gap: 6px;
 }
-.terminal-display-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.terminal-display-content { position: relative; }
+.btn-clear-display {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: .85rem;
+  color: var(--muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+  transition: color .15s, background .15s;
+}
+.btn-clear-display:hover {
+  color: var(--danger);
+  background: rgba(0,0,0,.05);
 }
 .terminal-display-idle {
   font-size: 1.1rem;
