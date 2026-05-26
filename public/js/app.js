@@ -146,6 +146,7 @@ const $btnLogout       = document.getElementById('btn-logout');
 
 // Terminal display
 const $terminalDisplay = document.getElementById('terminal-display-content');
+const $btnClearDisplay = document.getElementById('btn-clear-display');
 
 // Overlay
 const $overlay         = document.getElementById('payment-overlay');
@@ -320,7 +321,7 @@ function updateTerminalDisplay(data) {
       ts.txnId = e.transactionId;
       clearTimeout(ts.clearTimer);
     }
-    if (e.event === 'TENDER_FINAL' || e.event === 'CARD_REMOVED') {
+    if (e.event === 'TENDER_FINAL' || e.event === 'CARD_REMOVED' || e.event === 'RECEIPT_PRINTED') {
       isFinal = true;
     }
   }
@@ -354,17 +355,29 @@ function renderTerminalDisplay() {
   const keys = Object.keys(_termDisplayState);
   const activeEntries = keys.filter(k => _termDisplayState[k].lines && _termDisplayState[k].lines.length > 0);
 
+  // Remove all children except the clear button
+  Array.from($terminalDisplay.children).forEach(ch => {
+    if (ch !== $btnClearDisplay) ch.remove();
+  });
+
   if (activeEntries.length === 0) {
-    $terminalDisplay.innerHTML = '<span class="terminal-display-idle">Idle</span>';
+    const idle = document.createElement('span');
+    idle.className = 'terminal-display-idle';
+    idle.textContent = 'Idle';
+    $terminalDisplay.insertBefore(idle, $btnClearDisplay);
     return;
   }
 
-  $terminalDisplay.innerHTML = activeEntries.map(k => {
+  const frag = document.createDocumentFragment();
+  activeEntries.forEach(k => {
     const ts = _termDisplayState[k];
-    const label = k === '_default' ? '' : `<div class="terminal-display-label">${k}</div>`;
-    const body = (ts.lines || []).map(l => `<div class="terminal-display-line">${l}</div>`).join('');
-    return `<div class="terminal-display-block">${label}${body}</div>`;
-  }).join('');
+    const block = document.createElement('div');
+    block.className = 'terminal-display-block';
+    if (k !== '_default') block.innerHTML += `<div class="terminal-display-label">${k}</div>`;
+    block.innerHTML += (ts.lines || []).map(l => `<div class="terminal-display-line">${l}</div>`).join('');
+    frag.appendChild(block);
+  });
+  $terminalDisplay.insertBefore(frag, $btnClearDisplay);
 }
 
 function clearTerminalDisplay() {
@@ -372,7 +385,13 @@ function clearTerminalDisplay() {
     clearTimeout(_termDisplayState[k].clearTimer);
     delete _termDisplayState[k];
   }
-  $terminalDisplay.innerHTML = '<span class="terminal-display-idle">Idle</span>';
+  Array.from($terminalDisplay.children).forEach(ch => {
+    if (ch !== $btnClearDisplay) ch.remove();
+  });
+  const idle = document.createElement('span');
+  idle.className = 'terminal-display-idle';
+  idle.textContent = 'Idle';
+  $terminalDisplay.insertBefore(idle, $btnClearDisplay);
 }
 
 // ====================== Products ======================
@@ -1239,9 +1258,7 @@ function bindEvents() {
     const displayEl = document.getElementById('terminal-display');
     displayEl.style.display = state.isAsync ? '' : 'none';
     if (!state.isAsync) {
-      _currentTxnId = null;
-      clearTimeout(_displayClearTimeout);
-      $terminalDisplay.innerHTML = '<span class="terminal-display-idle">Idle</span>';
+      clearTerminalDisplay();
     }
     showToast(state.isAsync ? 'Switched to Async mode' : 'Switched to Sync mode', 'info');
   });
