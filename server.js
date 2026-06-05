@@ -12,7 +12,8 @@ let orders = [];
 let sseClients = [];
 const MAX_TERMINALS = 5;
 let terminals = process.env.ADYEN_TERMINAL_POIID
-  ? [{ poiId: process.env.ADYEN_TERMINAL_POIID, active: true }]
+  ? process.env.ADYEN_TERMINAL_POIID.split(',').map(id => id.trim()).filter(Boolean)
+      .map((id, i) => ({ poiId: id, active: i === 0 }))
   : [];
 
 function getActivePoiId() {
