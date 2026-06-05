@@ -310,7 +310,7 @@ html, body {
 .terminal-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 10px;
   margin-bottom: 8px;
 }
 .terminal-empty {
@@ -320,13 +320,18 @@ html, body {
 }
 .terminal-item {
   display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 10px;
   border-radius: 6px;
   border: 1px solid var(--border);
   background: #fff;
   transition: all .15s;
+}
+.terminal-item-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 .terminal-item.active {
   border-color: var(--primary);
@@ -365,12 +370,10 @@ html, body {
 .terminal-status-dot.online { color: var(--success); }
 .terminal-status-dot.offline { color: var(--danger); }
 .terminal-poi-id {
-  font-size: .72rem;
+  font-size: .78rem;
   font-family: 'SF Mono', ui-monospace, monospace;
   color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-all;
 }
 .terminal-delete-btn {
   background: none;

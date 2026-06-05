@@ -563,12 +563,14 @@ function renderTerminals() {
     const checked = state._terminalChecked;
     return `
     <div class="terminal-item ${t.active ? 'active' : ''}">
-      <button class="terminal-select-btn" onclick="selectTerminal('${t.poiId}')" title="Set as active">
-        <span class="terminal-radio ${t.active ? 'checked' : ''}"></span>
-        <span class="terminal-poi-id">${t.poiId}</span>
-        ${checked ? `<span class="terminal-status-dot ${online ? 'online' : 'offline'}">${online ? 'Online' : 'Offline'}</span>` : ''}
-      </button>
-      <button class="terminal-delete-btn" onclick="deleteTerminal('${t.poiId}')" title="Remove">✕</button>
+      ${checked ? `<span class="terminal-status-dot ${online ? 'online' : 'offline'}">${online ? 'Online' : 'Offline'}</span>` : ''}
+      <div class="terminal-item-row">
+        <button class="terminal-select-btn" onclick="selectTerminal('${t.poiId}')" title="Set as active">
+          <span class="terminal-radio ${t.active ? 'checked' : ''}"></span>
+          <span class="terminal-poi-id">${t.poiId}</span>
+        </button>
+        <button class="terminal-delete-btn" onclick="deleteTerminal('${t.poiId}')" title="Remove">✕</button>
+      </div>
     </div>`;
   }).join('');
   const active = list.find(t => t.active);
