@@ -181,6 +181,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('terminal-display').style.display = state.isAsync ? '' : 'none';
   setupSSE();
   bindEvents();
+  initTapToPay();
+  await handleTtpReturn();
   if (state.config.poiId) checkTerminal();
 });
 
@@ -1286,6 +1288,202 @@ function bindEvents() {
     setRefundModalState('input');
     $refundModal.classList.add('hidden');
   });
+}
+
+// ====================== Tap to Pay (Android Payments app) ======================
+const TTP_LINK_BASE = 'https://www.adyen.com/test';
+const TTP = {};
+
+function ttpB64Url(str) {
+  return btoa(unescape(encodeURIComponent(str)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function ttpReturnUrl(step) {
+  return window.location.origin + '/ttp/' + step;
+}
+
+function initTapToPay() {
+  TTP.storeInput   = document.getElementById('ttp-store-id');
+  TTP.status       = document.getElementById('ttp-status');
+  TTP.statusText   = document.getElementById('ttp-status-text');
+  TTP.installation = document.getElementById('ttp-installation');
+  TTP.btnBoard     = document.getElementById('btn-ttp-board');
+  TTP.btnPay       = document.getElementById('btn-ttp-pay');
+  TTP.btnRevoke    = document.getElementById('btn-ttp-revoke');
+  TTP.hint         = document.getElementById('ttp-hint');
+  if (!TTP.storeInput) return;
+
+  const savedStore = localStorage.getItem('ttp_storeId');
+  const defaultStore = (state.config.tapToPay && state.config.tapToPay.defaultStoreId) || '';
+  TTP.storeInput.value = savedStore || defaultStore;
+  TTP.storeInput.addEventListener('change', () => {
+    localStorage.setItem('ttp_storeId', TTP.storeInput.value.trim());
+  });
+
+  TTP.btnBoard.addEventListener('click', ttpStartBoarding);
+  TTP.btnPay.addEventListener('click', ttpStartPayment);
+  TTP.btnRevoke.addEventListener('click', ttpRevoke);
+
+  renderTtpStatus();
+}
+
+function renderTtpStatus() {
+  if (!TTP.status) return;
+  const installationId = localStorage.getItem('ttp_installationId') || '';
+  if (installationId) {
+    TTP.status.className = 'ttp-status ttp-status-boarded';
+    TTP.statusText.textContent = 'Boarded';
+    TTP.installation.classList.remove('hidden');
+    TTP.installation.textContent = 'Installation ID: ' + installationId;
+    TTP.btnBoard.textContent = 'Re-board this device';
+    TTP.btnPay.classList.remove('hidden');
+    TTP.btnRevoke.classList.remove('hidden');
+  } else {
+    TTP.status.className = 'ttp-status ttp-status-unboarded';
+    TTP.statusText.textContent = 'Not boarded';
+    TTP.installation.classList.add('hidden');
+    TTP.btnBoard.textContent = 'Board this device';
+    TTP.btnPay.classList.add('hidden');
+    TTP.btnRevoke.classList.add('hidden');
+  }
+}
+
+function ttpStartBoarding() {
+  const store = TTP.storeInput.value.trim();
+  if (!store) { showToast('Please enter a Store ID first', 'warning'); return; }
+  localStorage.setItem('ttp_storeId', store);
+  const link = `${TTP_LINK_BASE}/boarded?returnUrl=${encodeURIComponent(ttpReturnUrl('check'))}`;
+  window.location.href = link;
+}
+
+async function ttpStartPayment() {
+  const installationId = localStorage.getItem('ttp_installationId') || '';
+  if (!installationId) { showToast('Board the device first', 'warning'); return; }
+  const total = cartTotal();
+  if (total <= 0) { showToast('Cart is empty', 'warning'); return; }
+  const items = state.cart.map(c => ({ id: c.product.id, name: c.product.name, price: c.product.price, qty: c.qty }));
+  try {
+    showToast('Preparing Tap to Pay request...', 'info');
+    const res = await fetch('/api/taptopay/payment-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        amount: Math.round(total * 100) / 100,
+        currency: state.config.currency || 'EUR',
+        installationId,
+        items
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showApiResponse('Tap to Pay request error', data);
+      showToast(`Tap to Pay error: ${data.error || 'request failed'}`, 'error');
+      return;
+    }
+    const link = `${TTP_LINK_BASE}/nexo?request=${data.request}&returnUrl=${encodeURIComponent(ttpReturnUrl('pay'))}`;
+    window.location.href = link;
+  } catch (err) {
+    showToast(`Tap to Pay error: ${err.message}`, 'error');
+  }
+}
+
+async function ttpRevoke() {
+  const installationId = localStorage.getItem('ttp_installationId') || '';
+  if (!installationId) return;
+  try {
+    const res = await fetch('/api/taptopay/revoke', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ installationId })
+    });
+    const data = await res.json();
+    showApiResponse('Tap to Pay revoke', data);
+    if (res.ok) {
+      localStorage.removeItem('ttp_installationId');
+      renderTtpStatus();
+      showToast('Device unboarded', 'info');
+    } else {
+      showToast(`Revoke failed: ${data.error || ''}`, 'error');
+    }
+  } catch (err) {
+    showToast(`Revoke error: ${err.message}`, 'error');
+  }
+}
+
+// Handles App Link returns at /ttp/check, /ttp/board, /ttp/pay.
+// Returns true if this page load was an App Link return.
+async function handleTtpReturn() {
+  const m = window.location.pathname.match(/^\/ttp\/(check|board|pay)$/);
+  if (!m) return false;
+  const step = m[1];
+  const params = new URLSearchParams(window.location.search);
+  const all = {}; params.forEach((v, k) => { all[k] = v; });
+  const clean = () => history.replaceState({}, '', '/');
+
+  if (step === 'check') {
+    const boarded = params.get('boarded') === 'true';
+    const installationId = params.get('installationId') || '';
+    const boardingRequestToken = params.get('boardingRequestToken') || '';
+    if (boarded && installationId) {
+      localStorage.setItem('ttp_installationId', installationId);
+      renderTtpStatus();
+      showToast('Device already boarded', 'success');
+      clean(); return true;
+    }
+    if (!boardingRequestToken) {
+      showApiResponse('Tap to Pay boarding (check)', all);
+      showToast('Boarding check returned no token', 'error');
+      clean(); return true;
+    }
+    try {
+      const store = localStorage.getItem('ttp_storeId') || '';
+      const res = await fetch('/api/taptopay/boarding-token', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ boardingRequestToken, storeId: store })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.boardingToken) {
+        showApiResponse('Tap to Pay boarding-token error', data);
+        showToast(`Boarding failed: ${data.error || 'no token'}`, 'error');
+        clean(); return true;
+      }
+      const link = `${TTP_LINK_BASE}/board?boardingToken=${ttpB64Url(data.boardingToken)}&returnUrl=${encodeURIComponent(ttpReturnUrl('board'))}`;
+      window.location.href = link;
+      return true; // redirecting to finish boarding
+    } catch (err) {
+      showToast(`Boarding error: ${err.message}`, 'error');
+      clean(); return true;
+    }
+  }
+
+  if (step === 'board') {
+    const boarded = params.get('boarded') === 'true';
+    const installationId = params.get('installationId') || '';
+    const error = params.get('error') || '';
+    if (boarded && installationId) {
+      localStorage.setItem('ttp_installationId', installationId);
+      renderTtpStatus();
+      showToast('Device boarded successfully', 'success');
+    } else {
+      showApiResponse('Tap to Pay boarding (finish)', all);
+      showToast(`Boarding failed: ${error || 'unknown error'}`, 'error');
+    }
+    clean(); return true;
+  }
+
+  if (step === 'pay') {
+    showApiResponse('Tap to Pay result', all);
+    const result = (all.result || all.Result || '').toLowerCase();
+    if (result.includes('success') || all.approved === 'true') {
+      showToast('Tap to Pay payment successful', 'success');
+    } else if (result) {
+      showToast(`Tap to Pay result: ${all.result || all.Result}`, 'warning');
+    } else {
+      showToast('Tap to Pay returned — see API log for response', 'info');
+    }
+    clean(); return true;
+  }
+  return false;
 }
 
 // ====================== PWA: register service worker ======================

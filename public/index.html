@@ -65,6 +65,25 @@
                     <span class="toggle-text">Async</span>
                   </div>
                 </div>
+                <!-- Tap to Pay (Android Payments app) -->
+                <div class="settings-group ttp-group">
+                  <div class="settings-label">Tap to Pay (Android)</div>
+                  <div class="ttp-field">
+                    <label for="ttp-store-id" class="ttp-field-label">Store ID</label>
+                    <input type="text" id="ttp-store-id" class="ttp-input" placeholder="Store ID" autocomplete="off" />
+                  </div>
+                  <div id="ttp-status" class="ttp-status ttp-status-unboarded">
+                    <span class="ttp-status-dot"></span>
+                    <span id="ttp-status-text" class="ttp-status-text">Not boarded</span>
+                  </div>
+                  <div id="ttp-installation" class="ttp-installation hidden"></div>
+                  <div class="ttp-buttons">
+                    <button id="btn-ttp-board" class="btn btn-outline settings-btn">Board this device</button>
+                    <button id="btn-ttp-pay" class="btn btn-primary settings-btn hidden">Pay with Tap to Pay</button>
+                    <button id="btn-ttp-revoke" class="btn btn-outline settings-btn hidden">Unboard (revoke)</button>
+                  </div>
+                  <div id="ttp-hint" class="ttp-hint">Open this page on an Android device with the Adyen Payments Test app installed, then board.</div>
+                </div>
               </div>
             </section>
             <section id="product-section">

@@ -406,6 +406,72 @@ html, body {
 .settings-mode {
   margin-bottom: 0;
 }
+/* Tap to Pay */
+.ttp-group {
+  margin-top: clamp(8px, 1.2vw, 16px);
+  padding-top: clamp(8px, 1.2vw, 16px);
+  border-top: 1px solid var(--border);
+}
+.ttp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.ttp-field-label {
+  font-size: .7rem;
+  color: var(--text-light);
+}
+.ttp-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: .8rem;
+  font-family: 'SF Mono', ui-monospace, monospace;
+  box-sizing: border-box;
+}
+.ttp-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.ttp-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: .78rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.ttp-status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.ttp-status-boarded { color: var(--success); }
+.ttp-status-boarded .ttp-status-dot { background: var(--success); }
+.ttp-status-unboarded { color: var(--muted); }
+.ttp-status-unboarded .ttp-status-dot { background: var(--muted); }
+.ttp-installation {
+  font-size: .68rem;
+  color: var(--text-light);
+  font-family: 'SF Mono', ui-monospace, monospace;
+  word-break: break-all;
+  margin-bottom: 8px;
+}
+.ttp-buttons {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: clamp(6px, 1vw, 12px);
+}
+.ttp-hint {
+  font-size: .66rem;
+  color: var(--muted);
+  margin-top: 8px;
+  line-height: 1.4;
+}
 .toggle-row {
   display: inline-flex;
   align-items: center;

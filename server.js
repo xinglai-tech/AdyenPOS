@@ -3,6 +3,7 @@ const express = require('express');
 const session = require('express-session');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const nexoCrypto = require('./nexoCrypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -19,6 +20,21 @@ let terminals = process.env.ADYEN_TERMINAL_POIID
 function getActivePoiId() {
   const t = terminals.find(t => t.active);
   return t ? t.poiId : '';
+}
+
+// --------------- Tap to Pay (Android Payments app) config ---------------
+const PAYMENTS_APP_MGMT_BASE = 'https://management-test.adyen.com/v1';
+const PAYMENTS_APP_DEFAULT_STORE = process.env.ADYEN_PAYMENTS_APP_STORE_ID || 'ST32CQ6223229X5PBQCM9BCWF';
+// App Link base for the TEST Payments app
+const PAYMENTS_APP_LINK_BASE = 'https://www.adyen.com/test';
+
+function getNexoSecurityKey() {
+  return {
+    AdyenCryptoVersion: 1,
+    KeyIdentifier: process.env.ADYEN_NEXO_KEY_IDENTIFIER || '',
+    KeyVersion: parseInt(process.env.ADYEN_NEXO_KEY_VERSION || '1', 10),
+    Passphrase: process.env.ADYEN_NEXO_KEY_PASSPHRASE || ''
+  };
 }
 
 // --------------- Auth config ---------------
@@ -186,7 +202,12 @@ app.get('/api/config', (req, res) => {
     merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT || '',
     currency: process.env.CURRENCY || 'EUR',
     username: req.session.user || '',
-    sessionId: req.sessionID || ''
+    sessionId: req.sessionID || '',
+    tapToPay: {
+      defaultStoreId: PAYMENTS_APP_DEFAULT_STORE,
+      // true when the Nexo shared key is configured so payments can be encrypted
+      encryptionReady: !!(process.env.ADYEN_NEXO_KEY_PASSPHRASE && process.env.ADYEN_NEXO_KEY_IDENTIFIER)
+    }
   });
 });
 
@@ -608,6 +629,147 @@ app.post('/api/refund/unreferenced', async (req, res) => {
     order.refundResponse = data;
     broadcastSSE('orderUpdate', order);
     res.json({ order, adyenResponse: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --------------- API: Tap to Pay — generate boarding token ---------------
+// Step 2 of boarding: authenticate the app instance with the Payments App API.
+app.post('/api/taptopay/boarding-token', async (req, res) => {
+  const { boardingRequestToken, storeId } = req.body;
+  if (!boardingRequestToken) {
+    return res.status(400).json({ error: 'boardingRequestToken is required' });
+  }
+  const merchantId = process.env.ADYEN_MERCHANT_ACCOUNT || '';
+  if (!merchantId) {
+    return res.status(500).json({ error: 'ADYEN_MERCHANT_ACCOUNT is not configured' });
+  }
+  const store = (storeId && storeId.trim()) || PAYMENTS_APP_DEFAULT_STORE;
+  const url = `${PAYMENTS_APP_MGMT_BASE}/merchants/${encodeURIComponent(merchantId)}/stores/${encodeURIComponent(store)}/generatePaymentsAppBoardingToken`;
+
+  try {
+    const apiRes = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-API-key': process.env.ADYEN_API_KEY || ''
+      },
+      body: JSON.stringify({ boardingRequestToken })
+    });
+    const text = await apiRes.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { raw: text }; }
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ error: data.message || data.detail || 'Failed to generate boarding token', details: data });
+    }
+    // { installationId, boardingToken }
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --------------- API: Tap to Pay — build encrypted nexo payment request ---------------
+// Returns a Base64URL-encoded, Nexo-encrypted Terminal API request to embed in
+// the Payments app `nexo` App Link.
+app.post('/api/taptopay/payment-request', async (req, res) => {
+  const { amount, currency, installationId, items } = req.body;
+  if (!installationId) {
+    return res.status(400).json({ error: 'installationId is required (board the device first)' });
+  }
+  if (!amount || amount <= 0) {
+    return res.status(400).json({ error: 'A positive amount is required' });
+  }
+  const securityKey = getNexoSecurityKey();
+  if (!securityKey.Passphrase || !securityKey.KeyIdentifier) {
+    return res.status(500).json({ error: 'Nexo shared key is not configured on the server' });
+  }
+
+  const serviceId = uuidv4().replace(/-/g, '').slice(0, 10);
+  const transactionId = uuidv4();
+  const timestamp = new Date().toISOString();
+  const cur = currency || process.env.CURRENCY || 'EUR';
+
+  const messageHeader = {
+    ProtocolVersion: '3.0',
+    MessageClass: 'Service',
+    MessageCategory: 'Payment',
+    MessageType: 'Request',
+    ServiceID: serviceId,
+    SaleID: process.env.ADYEN_SALE_ID || 'POSWebApp',
+    POIID: installationId
+  };
+
+  const terminalApiRequest = {
+    SaleToPOIRequest: {
+      MessageHeader: messageHeader,
+      PaymentRequest: {
+        SaleData: {
+          SaleTransactionID: { TransactionID: transactionId, TimeStamp: timestamp }
+        },
+        PaymentTransaction: {
+          AmountsReq: { Currency: cur, RequestedAmount: amount }
+        }
+      }
+    }
+  };
+
+  try {
+    const secured = nexoCrypto.encrypt(messageHeader, JSON.stringify(terminalApiRequest), securityKey);
+    const wrapped = { SaleToPOIRequest: secured };
+    const request = Buffer.from(JSON.stringify(wrapped), 'utf-8').toString('base64url');
+
+    // Track as an order so it shows in the Orders list
+    const order = {
+      id: transactionId,
+      serviceId,
+      items: items || [],
+      amount,
+      currency: cur,
+      status: 'pending',
+      createdAt: timestamp,
+      response: null,
+      poiTransactionId: null,
+      poiTimestamp: null,
+      pspReference: null,
+      tenderReference: null,
+      terminalId: installationId,
+      viaTapToPay: true,
+      refundedAmount: 0
+    };
+    orders.unshift(order);
+    broadcastSSE('orderUpdate', order);
+
+    res.json({ request, serviceId, transactionId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --------------- API: Tap to Pay — revoke an app instance ---------------
+app.post('/api/taptopay/revoke', async (req, res) => {
+  const { installationId } = req.body;
+  if (!installationId) {
+    return res.status(400).json({ error: 'installationId is required' });
+  }
+  const merchantId = process.env.ADYEN_MERCHANT_ACCOUNT || '';
+  const url = `${PAYMENTS_APP_MGMT_BASE}/merchants/${encodeURIComponent(merchantId)}/paymentsApps/${encodeURIComponent(installationId)}/revoke`;
+  try {
+    const apiRes = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-API-key': process.env.ADYEN_API_KEY || ''
+      },
+      body: '{}'
+    });
+    const text = await apiRes.text();
+    let data; try { data = JSON.parse(text); } catch { data = { raw: text }; }
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ error: data.message || 'Revoke failed', details: data });
+    }
+    res.json({ ok: true, details: data });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
