@@ -407,11 +407,6 @@ html, body {
   margin-bottom: 0;
 }
 /* Tap to Pay */
-.ttp-group {
-  margin-top: clamp(8px, 1.2vw, 16px);
-  padding-top: clamp(8px, 1.2vw, 16px);
-  border-top: 1px solid var(--border);
-}
 .ttp-field {
   display: flex;
   flex-direction: column;

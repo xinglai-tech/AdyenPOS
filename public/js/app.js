@@ -1304,6 +1304,9 @@ function ttpReturnUrl(step) {
 }
 
 function initTapToPay() {
+  TTP.modal        = document.getElementById('ttp-modal');
+  TTP.openBtn      = document.getElementById('btn-ttp-open');
+  TTP.closeBtn     = document.getElementById('btn-ttp-close');
   TTP.storeInput   = document.getElementById('ttp-store-id');
   TTP.status       = document.getElementById('ttp-status');
   TTP.statusText   = document.getElementById('ttp-status-text');
@@ -1321,11 +1324,23 @@ function initTapToPay() {
     localStorage.setItem('ttp_storeId', TTP.storeInput.value.trim());
   });
 
+  TTP.openBtn.addEventListener('click', openTtpModal);
+  TTP.closeBtn.addEventListener('click', closeTtpModal);
+  TTP.modal.addEventListener('click', (e) => { if (e.target === TTP.modal) closeTtpModal(); });
   TTP.btnBoard.addEventListener('click', ttpStartBoarding);
   TTP.btnPay.addEventListener('click', ttpStartPayment);
   TTP.btnRevoke.addEventListener('click', ttpRevoke);
 
   renderTtpStatus();
+}
+
+function openTtpModal() {
+  renderTtpStatus();
+  TTP.modal.classList.remove('hidden');
+}
+
+function closeTtpModal() {
+  TTP.modal.classList.add('hidden');
 }
 
 function renderTtpStatus() {
