@@ -1272,6 +1272,17 @@ function bindEvents() {
     window.location.href = '/login.html';
   });
 
+  // Mobile: Orders overlay toggle
+  const $ordersToggle = document.getElementById('btn-orders-toggle');
+  const $ordersClose = document.getElementById('btn-orders-close');
+  const $orderPanel = document.getElementById('order-panel');
+  if ($ordersToggle && $orderPanel) {
+    $ordersToggle.addEventListener('click', () => $orderPanel.classList.add('open'));
+  }
+  if ($ordersClose && $orderPanel) {
+    $ordersClose.addEventListener('click', () => $orderPanel.classList.remove('open'));
+  }
+
   // Overlay
   $btnCheckStatus.addEventListener('click', checkTransactionStatus);
   $btnCancelPay.addEventListener('click', cancelPayment);
@@ -1315,6 +1326,8 @@ function initTapToPay() {
   TTP.btnPay       = document.getElementById('btn-ttp-pay');
   TTP.btnRevoke    = document.getElementById('btn-ttp-revoke');
   TTP.hint         = document.getElementById('ttp-hint');
+  TTP.amount       = document.getElementById('ttp-amount');
+  TTP.message      = document.getElementById('ttp-message');
   if (!TTP.storeInput) return;
 
   const savedStore = localStorage.getItem('ttp_storeId');
@@ -1335,12 +1348,20 @@ function initTapToPay() {
 }
 
 function openTtpModal() {
+  ttpMessage('');
   renderTtpStatus();
   TTP.modal.classList.remove('hidden');
 }
 
 function closeTtpModal() {
   TTP.modal.classList.add('hidden');
+}
+
+function ttpMessage(msg, type = 'info') {
+  if (!TTP.message) return;
+  if (!msg) { TTP.message.classList.add('hidden'); TTP.message.textContent = ''; return; }
+  TTP.message.textContent = msg;
+  TTP.message.className = `ttp-message ttp-message-${type}`;
 }
 
 function renderTtpStatus() {
@@ -1354,10 +1375,25 @@ function renderTtpStatus() {
     TTP.btnBoard.textContent = 'Re-board this device';
     TTP.btnPay.classList.remove('hidden');
     TTP.btnRevoke.classList.remove('hidden');
+
+    // Show the amount that will be charged (current cart total)
+    const cur = state.config.currency || 'EUR';
+    const total = cartTotal();
+    TTP.amount.classList.remove('hidden');
+    if (total > 0) {
+      TTP.amount.textContent = `Amount to charge: ${cur} ${total.toFixed(2)}`;
+      TTP.btnPay.disabled = false;
+      TTP.btnPay.textContent = 'Pay with Tap to Pay';
+    } else {
+      TTP.amount.textContent = 'Cart is empty — add products before paying.';
+      TTP.btnPay.disabled = true;
+      TTP.btnPay.textContent = 'Pay (cart empty)';
+    }
   } else {
     TTP.status.className = 'ttp-status ttp-status-unboarded';
     TTP.statusText.textContent = 'Not boarded';
     TTP.installation.classList.add('hidden');
+    TTP.amount.classList.add('hidden');
     TTP.btnBoard.textContent = 'Board this device';
     TTP.btnPay.classList.add('hidden');
     TTP.btnRevoke.classList.add('hidden');
@@ -1374,12 +1410,12 @@ function ttpStartBoarding() {
 
 async function ttpStartPayment() {
   const installationId = localStorage.getItem('ttp_installationId') || '';
-  if (!installationId) { showToast('Board the device first', 'warning'); return; }
+  if (!installationId) { ttpMessage('Board the device first', 'error'); return; }
   const total = cartTotal();
-  if (total <= 0) { showToast('Cart is empty', 'warning'); return; }
+  if (total <= 0) { ttpMessage('Cart is empty — add products before paying.', 'error'); return; }
   const items = state.cart.map(c => ({ id: c.product.id, name: c.product.name, price: c.product.price, qty: c.qty }));
   try {
-    showToast('Preparing Tap to Pay request...', 'info');
+    ttpMessage('Preparing Tap to Pay request...', 'info');
     const res = await fetch('/api/taptopay/payment-request', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1393,13 +1429,14 @@ async function ttpStartPayment() {
     const data = await res.json();
     if (!res.ok) {
       showApiResponse('Tap to Pay request error', data);
-      showToast(`Tap to Pay error: ${data.error || 'request failed'}`, 'error');
+      ttpMessage(`Error: ${data.error || 'request failed'}`, 'error');
       return;
     }
+    ttpMessage('Opening Payments app...', 'info');
     const link = `${TTP_LINK_BASE}/nexo?request=${data.request}&returnUrl=${encodeURIComponent(ttpReturnUrl('pay'))}`;
     window.location.href = link;
   } catch (err) {
-    showToast(`Tap to Pay error: ${err.message}`, 'error');
+    ttpMessage(`Error: ${err.message}`, 'error');
   }
 }
 
@@ -1441,12 +1478,15 @@ async function handleTtpReturn() {
     const boardingRequestToken = params.get('boardingRequestToken') || '';
     if (boarded && installationId) {
       localStorage.setItem('ttp_installationId', installationId);
-      renderTtpStatus();
+      openTtpModal();
+      ttpMessage('Device already boarded.', 'info');
       showToast('Device already boarded', 'success');
       clean(); return true;
     }
     if (!boardingRequestToken) {
       showApiResponse('Tap to Pay boarding (check)', all);
+      openTtpModal();
+      ttpMessage('Boarding check returned no token. See API log.', 'error');
       showToast('Boarding check returned no token', 'error');
       clean(); return true;
     }
@@ -1459,6 +1499,8 @@ async function handleTtpReturn() {
       const data = await res.json();
       if (!res.ok || !data.boardingToken) {
         showApiResponse('Tap to Pay boarding-token error', data);
+        openTtpModal();
+        ttpMessage(`Boarding failed: ${data.error || 'no token'}`, 'error');
         showToast(`Boarding failed: ${data.error || 'no token'}`, 'error');
         clean(); return true;
       }
@@ -1466,6 +1508,8 @@ async function handleTtpReturn() {
       window.location.href = link;
       return true; // redirecting to finish boarding
     } catch (err) {
+      openTtpModal();
+      ttpMessage(`Boarding error: ${err.message}`, 'error');
       showToast(`Boarding error: ${err.message}`, 'error');
       clean(); return true;
     }
@@ -1475,12 +1519,15 @@ async function handleTtpReturn() {
     const boarded = params.get('boarded') === 'true';
     const installationId = params.get('installationId') || '';
     const error = params.get('error') || '';
+    openTtpModal();
     if (boarded && installationId) {
       localStorage.setItem('ttp_installationId', installationId);
       renderTtpStatus();
+      ttpMessage('Device boarded successfully.', 'info');
       showToast('Device boarded successfully', 'success');
     } else {
       showApiResponse('Tap to Pay boarding (finish)', all);
+      ttpMessage(`Boarding failed: ${error || 'unknown error'}`, 'error');
       showToast(`Boarding failed: ${error || 'unknown error'}`, 'error');
     }
     clean(); return true;
@@ -1488,13 +1535,15 @@ async function handleTtpReturn() {
 
   if (step === 'pay') {
     showApiResponse('Tap to Pay result', all);
+    openTtpModal();
     const result = (all.result || all.Result || '').toLowerCase();
+    const detail = Object.keys(all).length ? JSON.stringify(all, null, 2) : '(no parameters returned)';
     if (result.includes('success') || all.approved === 'true') {
+      ttpMessage(`Payment successful.\n\n${detail}`, 'info');
       showToast('Tap to Pay payment successful', 'success');
-    } else if (result) {
-      showToast(`Tap to Pay result: ${all.result || all.Result}`, 'warning');
     } else {
-      showToast('Tap to Pay returned — see API log for response', 'info');
+      ttpMessage(`Payment result:\n\n${detail}`, 'error');
+      showToast('Tap to Pay returned — see result in the dialog', 'info');
     }
     clean(); return true;
   }

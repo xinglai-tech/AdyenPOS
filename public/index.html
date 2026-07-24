@@ -20,6 +20,7 @@
         <div class="panel-header-right">
           <span id="order-count" class="badge">0</span>
           <button id="btn-clear-orders" class="btn-clear-orders" title="Clear all orders">✕</button>
+          <button id="btn-orders-close" class="btn-orders-close" title="Close">Close</button>
         </div>
       </div>
       <div class="order-search">
@@ -36,6 +37,7 @@
         <!-- Left: Products + Settings + Cart -->
         <div id="left-col">
           <div id="notification-row">
+            <button id="btn-orders-toggle" class="btn-orders-toggle" title="Show orders">☰ Orders</button>
             <div id="notification-bar" class="notification-bar notification-idle">&nbsp;</div>
             <button id="btn-logout" class="btn-logout">Logout</button>
           </div>
@@ -176,6 +178,8 @@
         <span id="ttp-status-text" class="ttp-status-text">Not boarded</span>
       </div>
       <div id="ttp-installation" class="ttp-installation hidden"></div>
+      <div id="ttp-amount" class="ttp-amount hidden"></div>
+      <div id="ttp-message" class="ttp-message hidden"></div>
       <div class="ttp-buttons">
         <button id="btn-ttp-board" class="btn btn-outline btn-action">Board this device</button>
         <button id="btn-ttp-pay" class="btn btn-primary btn-action hidden">Pay with Tap to Pay</button>
