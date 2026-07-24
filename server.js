@@ -747,6 +747,63 @@ app.post('/api/taptopay/payment-request', async (req, res) => {
   }
 });
 
+// --------------- API: Tap to Pay — decrypt the nexo payment response ---------------
+// The Payments app returns an encrypted, Base64URL-encoded SaleToPOIResponse to
+// the returnUrl. Decrypt it, update the matching order, and return the result.
+app.post('/api/taptopay/payment-result', async (req, res) => {
+  const { response } = req.body;
+  if (!response) {
+    return res.status(400).json({ error: 'response is required' });
+  }
+  const securityKey = getNexoSecurityKey();
+  if (!securityKey.Passphrase || !securityKey.KeyIdentifier) {
+    return res.status(500).json({ error: 'Nexo shared key is not configured on the server' });
+  }
+
+  try {
+    const decoded = JSON.parse(Buffer.from(response, 'base64url').toString('utf-8'));
+    const secured = decoded.SaleToPOIResponse || decoded.SaleToPOIRequest;
+    if (!secured || !secured.NexoBlob) {
+      return res.status(400).json({ error: 'Unexpected response envelope', decoded });
+    }
+
+    const plaintext = nexoCrypto.decrypt(secured, securityKey);
+    const data = JSON.parse(plaintext);
+
+    const saleResponse = data?.SaleToPOIResponse;
+    const paymentResponse = saleResponse?.PaymentResponse;
+    const serviceId = saleResponse?.MessageHeader?.ServiceID;
+    let order = orders.find(o => o.serviceId === serviceId);
+
+    if (order && paymentResponse) {
+      const result = paymentResponse.Response?.Result;
+      const errCond = paymentResponse.Response?.ErrorCondition;
+      if (result === 'Success') order.status = 'paid';
+      else if (errCond === 'Aborted' || errCond === 'Cancel') order.status = 'cancelled';
+      else order.status = 'failed';
+      order.response = data;
+      const poiData = paymentResponse.POIData;
+      if (poiData?.POITransactionID) {
+        order.poiTransactionId = poiData.POITransactionID.TransactionID;
+        order.poiTimestamp = poiData.POITransactionID.TimeStamp;
+      }
+      order.pspReference = extractPspReference(paymentResponse);
+      order.tenderReference = extractTenderReference(paymentResponse);
+      order.paymentBrand = extractPaymentBrand(paymentResponse);
+      broadcastSSE('orderUpdate', order);
+    }
+
+    res.json({
+      result: paymentResponse?.Response?.Result || null,
+      errorCondition: paymentResponse?.Response?.ErrorCondition || null,
+      response: data,
+      order: order || null
+    });
+  } catch (err) {
+    res.status(500).json({ error: `Decryption/parse failed: ${err.message}` });
+  }
+});
+
 // --------------- API: Tap to Pay — revoke an app instance ---------------
 app.post('/api/taptopay/revoke', async (req, res) => {
   const { installationId } = req.body;

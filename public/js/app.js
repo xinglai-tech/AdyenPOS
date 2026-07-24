@@ -1534,18 +1534,45 @@ async function handleTtpReturn() {
   }
 
   if (step === 'pay') {
-    showApiResponse('Tap to Pay result', all);
     openTtpModal();
-    const result = (all.result || all.Result || '').toLowerCase();
-    const detail = Object.keys(all).length ? JSON.stringify(all, null, 2) : '(no parameters returned)';
-    if (result.includes('success') || all.approved === 'true') {
-      ttpMessage(`Payment successful.\n\n${detail}`, 'info');
-      showToast('Tap to Pay payment successful', 'success');
-    } else {
-      ttpMessage(`Payment result:\n\n${detail}`, 'error');
-      showToast('Tap to Pay returned — see result in the dialog', 'info');
+    clean();
+    const encrypted = params.get('response') || '';
+    if (encrypted) {
+      ttpMessage('Decrypting payment response...', 'info');
+      try {
+        const res = await fetch('/api/taptopay/payment-result', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ response: encrypted })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showApiResponse('Tap to Pay result (decrypt error)', data);
+          ttpMessage(`Could not decrypt response: ${data.error || 'error'}`, 'error');
+          return true;
+        }
+        showApiResponse('Tap to Pay result (decrypted)', data.response);
+        const pr = data.response?.SaleToPOIResponse?.PaymentResponse;
+        const detail = JSON.stringify(pr || data.response, null, 2);
+        if (data.result === 'Success') {
+          const amt = pr?.PaymentResult?.AmountsResp;
+          const psp = data.order?.pspReference;
+          ttpMessage(`✓ Payment SUCCESSFUL\n${psp ? 'PSP: ' + psp + '\n' : ''}${amt ? 'Authorized: ' + (amt.Currency || '') + ' ' + (amt.AuthorizedAmount ?? '') + '\n' : ''}\n${detail}`, 'info');
+          showToast('Tap to Pay payment successful', 'success');
+        } else {
+          ttpMessage(`✗ Payment ${data.result || 'FAILED'}${data.errorCondition ? ' (' + data.errorCondition + ')' : ''}\n\n${detail}`, 'error');
+          showToast(`Tap to Pay: ${data.result || 'failed'}`, 'warning');
+        }
+      } catch (err) {
+        ttpMessage(`Error reading response: ${err.message}`, 'error');
+      }
+      return true;
     }
-    clean(); return true;
+    // No encrypted payload — show whatever came back
+    showApiResponse('Tap to Pay result', all);
+    const detail = Object.keys(all).length ? JSON.stringify(all, null, 2) : '(no parameters returned)';
+    ttpMessage(`Returned from Payments app:\n\n${detail}`, 'info');
+    showToast('Tap to Pay returned — see the dialog', 'info');
+    return true;
   }
   return false;
 }

@@ -7,7 +7,7 @@
 // Encryption: AES-256-CBC, actualIV = derivedIV XOR randomNonce(16 bytes).
 // Integrity: HMAC-SHA256 over the PLAINTEXT message using hmacKey.
 
-const { createCipheriv, createHmac, pbkdf2Sync, randomBytes } = require('crypto');
+const { createCipheriv, createDecipheriv, createHmac, pbkdf2Sync, randomBytes, timingSafeEqual } = require('crypto');
 
 const HMAC_KEY_LENGTH = 32;
 const CIPHER_KEY_LENGTH = 32;
@@ -75,4 +75,36 @@ function encrypt(messageHeader, saleToPoiMessageJson, securityKey) {
   };
 }
 
-module.exports = { encrypt };
+/**
+ * Decrypt a Nexo secured message back into the original Terminal API JSON string.
+ * @param {{MessageHeader:object,NexoBlob:string,SecurityTrailer:object}} securedMessage
+ * @param {{AdyenCryptoVersion:number,KeyIdentifier:string,KeyVersion:number,Passphrase:string}} securityKey
+ * @returns {string} the decrypted SaleToPOIResponse/Request JSON string
+ */
+function decrypt(securedMessage, securityKey) {
+  if (!securityKey || !securityKey.Passphrase) {
+    throw new Error('Invalid Nexo security key configuration');
+  }
+  if (!securedMessage || !securedMessage.NexoBlob || !securedMessage.SecurityTrailer) {
+    throw new Error('Malformed secured message');
+  }
+
+  const derivedKey = deriveKeyMaterial(securityKey.Passphrase);
+  const encrypted = Buffer.from(securedMessage.NexoBlob, 'base64');
+  const nonce = Buffer.from(securedMessage.SecurityTrailer.Nonce, 'base64');
+  const actualIv = xorIv(derivedKey.iv, nonce);
+
+  const decipher = createDecipheriv('aes-256-cbc', derivedKey.cipherKey, actualIv);
+  const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+
+  // Validate HMAC over the decrypted plaintext
+  const receivedHmac = Buffer.from(securedMessage.SecurityTrailer.Hmac, 'base64');
+  const computedHmac = hmacPlaintext(decrypted, derivedKey.hmacKey);
+  if (computedHmac.length !== receivedHmac.length || !timingSafeEqual(computedHmac, receivedHmac)) {
+    throw new Error('HMAC validation failed');
+  }
+
+  return decrypted.toString('utf-8');
+}
+
+module.exports = { encrypt, decrypt };

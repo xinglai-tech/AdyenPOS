@@ -1237,25 +1237,36 @@ html, body {
   #notification-row { padding: 10px 14px 0; flex-wrap: wrap; }
   .btn-orders-toggle { display: inline-block; }
 
-  /* Stack settings, products, terminal display */
+  /* Stack settings, products, terminal display — natural heights (no flex-grow collapse) */
   #product-settings-row {
     flex-direction: column;
+    flex: none;
+    min-height: 0;
     overflow: visible;
     padding: 12px 14px 8px;
     gap: 16px;
   }
-  #settings-section { width: 100%; }
+  #settings-section { width: 100%; flex: none; }
   #settings-section .settings-inner { flex: none; }
-  #product-settings-row #product-section { flex-shrink: 1; }
+  #product-settings-row #product-section { width: 100%; flex: none; }
 
-  /* Product grid: auto-height rows, square-ish cards */
+  /* Larger, touch-friendly settings buttons */
+  .settings-buttons { gap: 10px; }
+  .settings-btn {
+    padding: 11px 14px !important;
+    font-size: .92rem !important;
+  }
+
+  /* Product grid: 3 per row, square cards, auto height */
   .product-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     grid-template-rows: none;
-    grid-auto-rows: 1fr;
+    grid-auto-rows: auto;
     height: auto;
   }
   .product-card { aspect-ratio: 1 / 1; height: auto; }
+  .product-name { font-size: .78rem; }
+  .product-price { font-size: .82rem; }
 
   .terminal-display { min-height: 180px; }
 
