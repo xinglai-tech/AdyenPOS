@@ -54,7 +54,7 @@
                 <div class="settings-buttons">
                   <button id="btn-check-terminal" class="btn btn-outline settings-btn">Check terminal status</button>
                   <button id="btn-add-terminal" class="btn btn-outline settings-btn">Add terminal</button>
-                  <button id="btn-ttp-open" class="btn btn-outline settings-btn">Tap to Pay</button>
+                  <button id="btn-ttp-open" class="btn btn-outline settings-btn">Tap to Pay Android</button>
                   <div class="settings-label" style="align-self:flex-start">Debug</div>
                   <button id="btn-toggle-log" class="btn btn-outline settings-btn">Show API response</button>
                 </div>
@@ -168,7 +168,7 @@
   <!-- ==================== Tap to Pay Modal ==================== -->
   <div id="ttp-modal" class="overlay hidden">
     <div class="overlay-content modal-sm">
-      <h3 class="overlay-title">Tap to Pay (Android)</h3>
+      <h3 class="overlay-title">Adyen Payments app</h3>
       <div class="ttp-field">
         <label for="ttp-store-id" class="ttp-field-label">Store ID</label>
         <input type="text" id="ttp-store-id" class="ttp-input" placeholder="Store ID" autocomplete="off" />
@@ -185,7 +185,7 @@
         <button id="btn-ttp-pay" class="btn btn-primary btn-action hidden">Pay with Tap to Pay</button>
         <button id="btn-ttp-revoke" class="btn btn-outline btn-action hidden">Unboard (revoke)</button>
       </div>
-      <div id="ttp-hint" class="ttp-hint">Open this page on an Android device with the Adyen Payments Test app installed, then board. Payment uses the current cart total.</div>
+      <div id="ttp-hint" class="ttp-hint">Open this page on an Android device with the Adyen Payments Test app installed, then board.</div>
       <div class="overlay-actions">
         <button id="btn-ttp-close" class="btn btn-outline btn-action">Close</button>
       </div>

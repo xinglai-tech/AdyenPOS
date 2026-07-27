@@ -1616,6 +1616,12 @@ async function handleTtpReturn() {
     };
     const encrypted = rawFrom('response');
     const securityTrailer = rawFrom('securityTrailer');
+    // Log the raw incoming App Link before we wipe the URL.
+    showApiResponse('Tap to Pay App Link (pay)', {
+      appLink: window.location.href,
+      pathAndQuery: window.location.pathname + window.location.search,
+      params: all
+    });
     clean();
     if (encrypted) {
       ttpMessage('Decrypting payment response...', 'info');
@@ -1632,14 +1638,13 @@ async function handleTtpReturn() {
         }
         showApiResponse('Tap to Pay result (full)', data);
         const pr = data.response?.SaleToPOIResponse?.PaymentResponse;
-        const detail = JSON.stringify(data.response || data, null, 2);
         if (data.result === 'Success') {
           const amt = pr?.PaymentResult?.AmountsResp;
           const psp = data.order?.pspReference;
-          ttpMessage(`✓ Payment SUCCESSFUL\n${psp ? 'PSP: ' + psp + '\n' : ''}${amt ? 'Authorized: ' + (amt.Currency || '') + ' ' + (amt.AuthorizedAmount ?? '') + '\n' : ''}\n${detail}`, 'info');
+          ttpMessage(`✓ Payment SUCCESSFUL\n${psp ? 'PSP: ' + psp + '\n' : ''}${amt ? 'Authorized: ' + (amt.Currency || '') + ' ' + (amt.AuthorizedAmount ?? '') + '\n' : ''}\nSee API log for the full response.`, 'info');
           showToast('Tap to Pay payment successful', 'success');
         } else {
-          ttpMessage(`✗ Payment ${data.result || 'FAILED'}${data.errorCondition ? ' (' + data.errorCondition + ')' : ''}\n\n${detail}`, 'error');
+          ttpMessage(`✗ Payment ${data.result || 'FAILED'}${data.errorCondition ? ' (' + data.errorCondition + ')' : ''}\n\nSee API log for details.`, 'error');
           showToast(`Tap to Pay: ${data.result || 'failed'}`, 'warning');
         }
       } catch (err) {
