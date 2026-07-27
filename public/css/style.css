@@ -647,6 +647,7 @@ html, body {
   word-break: break-all;
   max-height: 400px;
   overflow: auto;
+  cursor: copy;
   transition: max-height .2s ease, padding .2s ease;
 }
 .log-entry-body.collapsed {

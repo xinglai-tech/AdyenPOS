@@ -1167,6 +1167,26 @@ function hideOverlay() {
 }
 
 // ====================== API Response Display ======================
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    showToast('Copied to clipboard', 'success');
+  } catch (err) {
+    showToast(`Copy failed: ${err.message}`, 'error');
+  }
+}
+
 function showApiResponse(label, data) {
   const time = new Date().toLocaleTimeString();
   const json = JSON.stringify(data, null, 2);
@@ -1200,6 +1220,11 @@ function showApiResponse(label, data) {
   const body = document.createElement('pre');
   body.className = 'log-entry-body';
   body.textContent = json;
+  body.title = 'Double-click to copy';
+  body.addEventListener('dblclick', () => {
+    window.getSelection()?.removeAllRanges();
+    copyToClipboard(body.textContent);
+  });
 
   entry.appendChild(header);
   entry.appendChild(body);
