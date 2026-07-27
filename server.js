@@ -875,7 +875,7 @@ app.post('/api/taptopay/payment-request', async (req, res) => {
 // The Payments app returns an encrypted, Base64URL-encoded SaleToPOIResponse to
 // the returnUrl. Decrypt it, update the matching order, and return the result.
 app.post('/api/taptopay/payment-result', async (req, res) => {
-  const { response } = req.body;
+  const { response, securityTrailer } = req.body;
   if (!response) {
     return res.status(400).json({ error: 'response is required' });
   }
@@ -884,15 +884,93 @@ app.post('/api/taptopay/payment-result', async (req, res) => {
     return res.status(500).json({ error: 'Nexo shared key is not configured on the server' });
   }
 
+  // Full diagnostics, logged to the server console and echoed back to the UI.
+  const debug = {
+    responseRaw: response,
+    responseLength: String(response).length,
+    securityTrailerRaw: securityTrailer || null,
+    mode: securityTrailer ? 'short' : 'full'
+  };
+  console.log('[TTP payment-result] incoming:', JSON.stringify(debug));
+
   try {
-    // Defensive: the Payments app returns a base64 blob in the URL. If any '+'
-    // survived as a space (URL decoding), restore it, and accept both the
-    // base64 and base64url alphabets before decoding the JSON envelope.
+    if (securityTrailer) {
+      // -------- SHORT response flow (docs.adyen.com Payments app) --------
+      // `response`        = Base64URL( base64-ciphertext string )
+      // `securityTrailer` = Base64URL( JSON { hmac, nonce, ... } )
+      // decrypted plaintext = "result=Success&url=https://checkoutpos.../payments/{psp}"
+      const nexoBlob = Buffer.from(String(response), 'base64url').toString('utf-8');
+      const stObj = JSON.parse(Buffer.from(String(securityTrailer), 'base64url').toString('utf-8'));
+      debug.nexoBlob = nexoBlob;
+      debug.securityTrailerDecoded = stObj;
+
+      const securedMessage = {
+        NexoBlob: nexoBlob,
+        SecurityTrailer: { Nonce: stObj.nonce || stObj.Nonce, Hmac: stObj.hmac || stObj.Hmac }
+      };
+      const plaintext = nexoCrypto.decrypt(securedMessage, securityKey);
+      debug.shortPlaintext = plaintext;
+      console.log('[TTP payment-result] short plaintext:', plaintext);
+
+      const sp = new URLSearchParams(plaintext);
+      const result = sp.get('result');
+      const fullUrl = sp.get('url');
+      const errorCondition = sp.get('errorCondition');
+
+      // Optionally retrieve the full payment response from the returned URL.
+      let fullResponse = null;
+      if (fullUrl) {
+        try {
+          const apiRes = await fetch(fullUrl, { headers: { 'x-API-key': process.env.ADYEN_API_KEY || '' } });
+          const text = await apiRes.text();
+          try { fullResponse = JSON.parse(text); } catch { fullResponse = { raw: text }; }
+          console.log('[TTP payment-result] full response:', JSON.stringify(fullResponse));
+        } catch (e) {
+          console.warn('[TTP payment-result] failed to fetch full response:', e.message);
+          fullResponse = { error: e.message };
+        }
+      }
+
+      // Update the matching order. ServiceID is not in the short response, so
+      // fall back to the most recent pending Tap to Pay order.
+      const paymentResponse = fullResponse?.SaleToPOIResponse?.PaymentResponse;
+      let order = orders.find(o => o.viaTapToPay && o.status === 'pending')
+        || orders.find(o => o.viaTapToPay);
+      if (order) {
+        if (result === 'Success') order.status = 'paid';
+        else if (errorCondition === 'Aborted' || errorCondition === 'Cancel' || !result) order.status = 'cancelled';
+        else order.status = 'failed';
+        order.response = fullResponse || { short: plaintext };
+        if (paymentResponse) {
+          const poiData = paymentResponse.POIData;
+          if (poiData?.POITransactionID) {
+            order.poiTransactionId = poiData.POITransactionID.TransactionID;
+            order.poiTimestamp = poiData.POITransactionID.TimeStamp;
+          }
+          order.pspReference = extractPspReference(paymentResponse);
+          order.tenderReference = extractTenderReference(paymentResponse);
+          order.paymentBrand = extractPaymentBrand(paymentResponse);
+        }
+        broadcastSSE('orderUpdate', order);
+      }
+
+      return res.json({
+        result: result || null,
+        errorCondition: errorCondition || null,
+        url: fullUrl || null,
+        response: fullResponse,
+        shortPlaintext: plaintext,
+        debug,
+        order: order || null
+      });
+    }
+
+    // -------- LEGACY full-response envelope flow (fallback) --------
     const normalized = String(response).replace(/ /g, '+').replace(/-/g, '+').replace(/_/g, '/');
     const decoded = JSON.parse(Buffer.from(normalized, 'base64').toString('utf-8'));
     const secured = decoded.SaleToPOIResponse || decoded.SaleToPOIRequest;
     if (!secured || !secured.NexoBlob) {
-      return res.status(400).json({ error: 'Unexpected response envelope', decoded });
+      return res.status(400).json({ error: 'Unexpected response envelope', decoded, debug });
     }
 
     const plaintext = nexoCrypto.decrypt(secured, securityKey);
@@ -925,10 +1003,12 @@ app.post('/api/taptopay/payment-result', async (req, res) => {
       result: paymentResponse?.Response?.Result || null,
       errorCondition: paymentResponse?.Response?.ErrorCondition || null,
       response: data,
+      debug,
       order: order || null
     });
   } catch (err) {
-    res.status(500).json({ error: `Decryption/parse failed: ${err.message}` });
+    console.error('[TTP payment-result] error:', err.message, '| debug:', JSON.stringify(debug));
+    res.status(500).json({ error: `Decryption/parse failed: ${err.message}`, debug });
   }
 });
 

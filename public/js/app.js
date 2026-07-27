@@ -1581,18 +1581,23 @@ async function handleTtpReturn() {
 
   if (step === 'pay') {
     openTtpModal();
-    // The Payments app returns a standard-base64 blob (which contains '+').
-    // URLSearchParams decodes '+' as a space, corrupting it, so read the raw
-    // query value and restore any '+' that were turned into spaces.
-    const rawResp = (window.location.search.match(/[?&]response=([^&]*)/) || [])[1] || '';
-    const encrypted = decodeURIComponent(rawResp).replace(/ /g, '+');
+    // The Payments app short response returns two params: `response` and
+    // `securityTrailer`, both Base64URL. Read them raw from the query string
+    // (restoring any '+' that URL decoding turned into spaces) so they are not
+    // corrupted before being sent to the backend for decryption.
+    const rawFrom = (name) => {
+      const m = window.location.search.match(new RegExp('[?&]' + name + '=([^&]*)'));
+      return m ? decodeURIComponent(m[1]).replace(/ /g, '+') : '';
+    };
+    const encrypted = rawFrom('response');
+    const securityTrailer = rawFrom('securityTrailer');
     clean();
     if (encrypted) {
       ttpMessage('Decrypting payment response...', 'info');
       try {
         const res = await fetch('/api/taptopay/payment-result', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ response: encrypted })
+          body: JSON.stringify({ response: encrypted, securityTrailer })
         });
         const data = await res.json();
         if (!res.ok) {
@@ -1600,9 +1605,9 @@ async function handleTtpReturn() {
           ttpMessage(`Could not decrypt response: ${data.error || 'error'}`, 'error');
           return true;
         }
-        showApiResponse('Tap to Pay result (decrypted)', data.response);
+        showApiResponse('Tap to Pay result (full)', data);
         const pr = data.response?.SaleToPOIResponse?.PaymentResponse;
-        const detail = JSON.stringify(pr || data.response, null, 2);
+        const detail = JSON.stringify(data.response || data, null, 2);
         if (data.result === 'Success') {
           const amt = pr?.PaymentResult?.AmountsResp;
           const psp = data.order?.pspReference;
