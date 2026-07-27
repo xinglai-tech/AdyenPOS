@@ -912,10 +912,23 @@ app.post('/api/taptopay/payment-result', async (req, res) => {
       debug.shortPlaintext = plaintext;
       console.log('[TTP payment-result] short plaintext:', plaintext);
 
-      const sp = new URLSearchParams(plaintext);
-      const result = sp.get('result');
-      const fullUrl = sp.get('url');
-      const errorCondition = sp.get('errorCondition');
+      // The plaintext is a JSON object {result, url, errorCondition, ...}. The
+      // docs show a form-encoded example, so fall back to that if needed.
+      let result, fullUrl, errorCondition;
+      try {
+        const obj = JSON.parse(plaintext);
+        result = obj.result; fullUrl = obj.url; errorCondition = obj.errorCondition;
+      } catch {
+        const sp = new URLSearchParams(plaintext);
+        result = sp.get('result'); fullUrl = sp.get('url'); errorCondition = sp.get('errorCondition');
+      }
+
+      // The PSP reference is the last path segment of the full-response URL.
+      let pspReference = null;
+      if (fullUrl) {
+        const m = String(fullUrl).match(/\/payments\/([^/?#]+)/);
+        if (m) pspReference = m[1];
+      }
 
       // Optionally retrieve the full payment response from the returned URL.
       let fullResponse = null;
@@ -937,17 +950,18 @@ app.post('/api/taptopay/payment-result', async (req, res) => {
       let order = orders.find(o => o.viaTapToPay && o.status === 'pending')
         || orders.find(o => o.viaTapToPay);
       if (order) {
-        if (result === 'Success') order.status = 'paid';
-        else if (errorCondition === 'Aborted' || errorCondition === 'Cancel' || !result) order.status = 'cancelled';
+        if (result === 'Success' || result === 'Partial') order.status = 'paid';
+        else if (errorCondition === 'Aborted' || errorCondition === 'Cancel') order.status = 'cancelled';
         else order.status = 'failed';
         order.response = fullResponse || { short: plaintext };
+        order.pspReference = pspReference;
         if (paymentResponse) {
           const poiData = paymentResponse.POIData;
           if (poiData?.POITransactionID) {
             order.poiTransactionId = poiData.POITransactionID.TransactionID;
             order.poiTimestamp = poiData.POITransactionID.TimeStamp;
           }
-          order.pspReference = extractPspReference(paymentResponse);
+          order.pspReference = extractPspReference(paymentResponse) || pspReference;
           order.tenderReference = extractTenderReference(paymentResponse);
           order.paymentBrand = extractPaymentBrand(paymentResponse);
         }
