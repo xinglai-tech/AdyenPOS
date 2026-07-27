@@ -39,9 +39,13 @@ function getNexoSecurityKey() {
 
 // --------------- Auth config ---------------
 // Single shared access code (no usernames), same model as the WebDemo project.
-const ACCESS_CODE = process.env.ACCESS_CODE || '101101';
+// It must come from the ACCESS_CODE environment variable: there is deliberately
+// no hard-coded fallback, so a misconfigured server refuses every login instead
+// of silently accepting a code that is visible in this repository.
+const ACCESS_CODE = process.env.ACCESS_CODE || '';
 
 function codeMatches(input) {
+  if (!ACCESS_CODE) return false;
   if (typeof input !== 'string' || !input) return false;
   const a = Buffer.from(input);
   const b = Buffer.from(ACCESS_CODE);
@@ -146,6 +150,12 @@ app.use((req, res, next) => {
 
 // --------------- Auth: login / logout routes (before auth middleware) ---------------
 app.post('/api/login', (req, res) => {
+  if (!ACCESS_CODE) {
+    return res.status(503).json({
+      error: 'Login unavailable: ACCESS_CODE is not configured on the server.'
+    });
+  }
+
   const now = Date.now();
   const ip = clientIp(req);
   let s = loginState.get(ip);
