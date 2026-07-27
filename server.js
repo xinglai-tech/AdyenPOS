@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const session = require('express-session');
+const crypto = require('crypto');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const nexoCrypto = require('./nexoCrypto');
@@ -38,34 +38,149 @@ function getNexoSecurityKey() {
 }
 
 // --------------- Auth config ---------------
-const AUTH_USERS = (process.env.AUTH_USERS || 'admin:admin').split(',').map(pair => {
-  const [username, password] = pair.split(':');
-  return { username, password };
-});
+// Single shared access code (no usernames), same model as the WebDemo project.
+const ACCESS_CODE = process.env.ACCESS_CODE || '101101';
+
+function codeMatches(input) {
+  if (typeof input !== 'string' || !input) return false;
+  const a = Buffer.from(input);
+  const b = Buffer.from(ACCESS_CODE);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+// --------------- Login throttling (per client IP) ---------------
+// A short access code is brute-forceable, so failures are counted in a rolling
+// window and the IP is locked out for a while once the threshold is reached.
+const LOGIN_WINDOW_MS = 60 * 1000;
+const LOGIN_FAIL_THRESHOLD = 10;
+const LOCK_DURATION_MS = 60 * 1000;
+const loginState = new Map(); // ip -> { count, windowTs, lockedUntil }
+
+// Normalize the client IP. Azure's X-Forwarded-For appends the client port,
+// which changes per connection, so it must be stripped.
+function clientIp(req) {
+  let ip = req.ip || '';
+  const v4 = ip.match(/^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/);
+  if (v4) return v4[1];
+  const v6 = ip.match(/^\[(.+)\]:\d+$/);
+  if (v6) ip = v6[1];
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  return ip;
+}
 
 // --------------- Middleware ---------------
 app.use(express.json());
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'pos-web-app-secret-change-me',
-  resave: false,
-  saveUninitialized: false,
-  cookie: { maxAge: 30 * 24 * 60 * 60 * 1000 }
-}));
+app.set('trust proxy', true);
+
+// --------------- Auth: stateless signed cookie ---------------
+// The login state lives entirely in an HMAC-signed cookie, so it survives
+// server restarts (unlike an in-memory session store) and works across
+// multiple instances. The signing key must be a stable SESSION_SECRET.
+const AUTH_COOKIE = 'pos_auth';
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const SESSION_SECRET = process.env.SESSION_SECRET || 'pos-web-app-secret-change-me';
+
+function readCookie(req, name) {
+  const header = req.headers.cookie;
+  if (!header) return '';
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx < 0) continue;
+    if (part.slice(0, idx).trim() === name) {
+      return decodeURIComponent(part.slice(idx + 1).trim());
+    }
+  }
+  return '';
+}
+
+function signPayload(payloadB64) {
+  return crypto.createHmac('sha256', SESSION_SECRET).update(payloadB64).digest('base64url');
+}
+
+function makeAuthToken() {
+  const payload = { sid: uuidv4(), exp: Date.now() + SESSION_TTL_MS };
+  const b64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  return `${b64}.${signPayload(b64)}`;
+}
+
+function verifyAuthToken(token) {
+  if (!token) return null;
+  const dot = token.lastIndexOf('.');
+  if (dot < 1) return null;
+  const b64 = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  const expected = signPayload(b64);
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(b64, 'base64url').toString('utf-8'));
+  } catch {
+    return null;
+  }
+  if (!payload || !payload.sid || typeof payload.exp !== 'number') return null;
+  if (Date.now() > payload.exp) return null;
+  return payload;
+}
+
+function authCookieParts(req, value, maxAgeSeconds) {
+  const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  const parts = [
+    `${AUTH_COOKIE}=${value}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${maxAgeSeconds}`
+  ];
+  if (secure) parts.push('Secure');
+  return parts.join('; ');
+}
+
+// Attach the verified login state (if any) to every request as req.auth.
+app.use((req, res, next) => {
+  req.auth = verifyAuthToken(readCookie(req, AUTH_COOKIE));
+  next();
+});
 
 // --------------- Auth: login / logout routes (before auth middleware) ---------------
 app.post('/api/login', (req, res) => {
-  const { username, password } = req.body;
-  const user = AUTH_USERS.find(u => u.username === username && u.password === password);
-  if (user) {
-    req.session.user = username;
-    res.json({ ok: true });
-  } else {
-    res.status(401).json({ error: 'Invalid username or password' });
+  const now = Date.now();
+  const ip = clientIp(req);
+  let s = loginState.get(ip);
+  if (!s) {
+    s = { count: 0, windowTs: now, lockedUntil: 0 };
+    loginState.set(ip, s);
   }
+
+  // Currently locked out -> reject everything, including the correct code.
+  if (now < s.lockedUntil) {
+    return res.status(429).json({ error: 'Too many attempts. Please wait a minute and try again.' });
+  }
+  // Reset the failure counter once the counting window has elapsed.
+  if (now - s.windowTs > LOGIN_WINDOW_MS) {
+    s.count = 0;
+    s.windowTs = now;
+  }
+
+  if (codeMatches(req.body && req.body.code)) {
+    loginState.delete(ip);
+    res.setHeader('Set-Cookie', authCookieParts(req, makeAuthToken(), Math.floor(SESSION_TTL_MS / 1000)));
+    return res.json({ ok: true });
+  }
+
+  s.count += 1;
+  if (s.count >= LOGIN_FAIL_THRESHOLD) {
+    s.lockedUntil = now + LOCK_DURATION_MS;
+    s.count = 0;
+    s.windowTs = now;
+  }
+  res.status(401).json({ error: 'Invalid access code' });
 });
 
 app.post('/api/logout', (req, res) => {
-  req.session.destroy();
+  res.setHeader('Set-Cookie', authCookieParts(req, '', 0));
   res.json({ ok: true });
 });
 
@@ -81,7 +196,7 @@ app.use((req, res, next) => {
   // Skip auth for service worker and manifest (needed for PWA)
   if (req.path === '/sw.js' || req.path === '/manifest.json') return next();
 
-  if (req.session && req.session.user) return next();
+  if (req.auth) return next();
 
   // API requests get 401
   if (req.path.startsWith('/api/')) {
@@ -201,8 +316,7 @@ app.get('/api/config', (req, res) => {
     saleId: process.env.ADYEN_SALE_ID || 'POSWebApp',
     merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT || '',
     currency: process.env.CURRENCY || 'EUR',
-    username: req.session.user || '',
-    sessionId: req.sessionID || '',
+    sessionId: (req.auth && req.auth.sid) || '',
     tapToPay: {
       defaultStoreId: PAYMENTS_APP_DEFAULT_STORE,
       // true when the Nexo shared key is configured so payments can be encrypted
@@ -213,9 +327,8 @@ app.get('/api/config', (req, res) => {
 
 // --------------- API: User Activity (presence) ---------------
 app.post('/api/activity', (req, res) => {
-  const username = req.session.user || 'unknown';
-  const sessionId = req.sessionID || '';
-  broadcastSSE('userActivity', { username, sessionId, timestamp: Date.now() });
+  const sessionId = (req.auth && req.auth.sid) || '';
+  broadcastSSE('userActivity', { sessionId, timestamp: Date.now() });
   res.json({ ok: true });
 });
 
@@ -827,6 +940,31 @@ app.post('/api/taptopay/revoke', async (req, res) => {
       return res.status(apiRes.status).json({ error: data.message || 'Revoke failed', details: data });
     }
     res.json({ ok: true, details: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --------------- API: Tap to Pay — list app instances (verify board/revoke state) ---------------
+// Used to confirm the real server-side state of an installationId, since the
+// Payments app on the device keeps showing "boarded" from its local state.
+app.get('/api/taptopay/instances', async (req, res) => {
+  const merchantId = process.env.ADYEN_MERCHANT_ACCOUNT || '';
+  if (!merchantId) {
+    return res.status(500).json({ error: 'ADYEN_MERCHANT_ACCOUNT is not configured' });
+  }
+  const store = (req.query.storeId || '').toString().trim() || PAYMENTS_APP_DEFAULT_STORE;
+  const url = `${PAYMENTS_APP_MGMT_BASE}/merchants/${encodeURIComponent(merchantId)}/stores/${encodeURIComponent(store)}/paymentsApps`;
+  try {
+    const apiRes = await fetch(url, {
+      headers: { 'x-API-key': process.env.ADYEN_API_KEY || '' }
+    });
+    const text = await apiRes.text();
+    let data; try { data = JSON.parse(text); } catch { data = { raw: text }; }
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json({ error: data.message || 'Failed to list app instances', details: data });
+    }
+    res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

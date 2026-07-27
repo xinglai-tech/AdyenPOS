@@ -108,18 +108,14 @@
       </div>
       <div>
         <h1>POS Web App</h1>
-        <p style="margin-bottom:0">Sign in to continue</p>
+        <p style="margin-bottom:0">Enter your access code to continue</p>
       </div>
     </div>
     <div id="error-msg" class="error-msg"></div>
     <form id="login-form">
       <div class="form-group">
-        <label for="username">Username</label>
-        <input type="text" id="username" name="username" autocomplete="username" required autofocus />
-      </div>
-      <div class="form-group">
-        <label for="password">Password</label>
-        <input type="password" id="password" name="password" autocomplete="current-password" required />
+        <label for="code">Access code</label>
+        <input type="password" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required autofocus />
       </div>
       <button type="submit" class="btn-login">Sign in</button>
     </form>
@@ -129,13 +125,12 @@
       e.preventDefault();
       const errEl = document.getElementById('error-msg');
       errEl.classList.remove('show');
-      const username = document.getElementById('username').value.trim();
-      const password = document.getElementById('password').value;
+      const code = document.getElementById('code').value.trim();
       try {
         const res = await fetch('/api/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password })
+          body: JSON.stringify({ code })
         });
         const data = await res.json();
         if (res.ok) {

@@ -1440,9 +1440,24 @@ async function ttpStartPayment() {
   }
 }
 
+// Look up the real server-side state of an installationId at Adyen.
+async function ttpLookupInstance(installationId) {
+  const store = (TTP.storeInput && TTP.storeInput.value.trim()) || localStorage.getItem('ttp_storeId') || '';
+  const res = await fetch(`/api/taptopay/instances?storeId=${encodeURIComponent(store)}`);
+  const data = await res.json();
+  showApiResponse('Tap to Pay app instances', data);
+  if (!res.ok) throw new Error(data.error || 'could not list app instances');
+  const list = data.paymentsApps || data.data || (Array.isArray(data) ? data : []);
+  const match = Array.isArray(list)
+    ? list.find(i => i && (i.id === installationId || i.installationId === installationId))
+    : null;
+  return { match, status: (match && match.status) || '' };
+}
+
 async function ttpRevoke() {
   const installationId = localStorage.getItem('ttp_installationId') || '';
   if (!installationId) return;
+  ttpMessage('Revoking this app instance at Adyen...', 'info');
   try {
     const res = await fetch('/api/taptopay/revoke', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1450,14 +1465,40 @@ async function ttpRevoke() {
     });
     const data = await res.json();
     showApiResponse('Tap to Pay revoke', data);
-    if (res.ok) {
-      localStorage.removeItem('ttp_installationId');
-      renderTtpStatus();
-      showToast('Device unboarded', 'info');
-    } else {
+    if (!res.ok) {
+      ttpMessage(`Revoke failed: ${data.error || 'request failed'}`, 'error');
       showToast(`Revoke failed: ${data.error || ''}`, 'error');
+      return;
     }
+
+    // Verify the real state instead of assuming the revoke worked
+    let verdict;
+    try {
+      const { match, status } = await ttpLookupInstance(installationId);
+      const st = String(status).toLowerCase();
+      if (!match) {
+        verdict = `✓ Revoked. Adyen no longer lists this instance for the store.`;
+      } else if (st.includes('revoke') || st.includes('inactive')) {
+        verdict = `✓ Revoked. Adyen reports status "${status}".`;
+      } else {
+        verdict = `⚠ Adyen still lists this instance as "${status}". The revoke may not have applied.`;
+      }
+    } catch (e) {
+      verdict = `Revoke accepted, but could not verify state: ${e.message}`;
+    }
+
+    localStorage.removeItem('ttp_installationId');
+    renderTtpStatus();
+    ttpMessage(
+      `${verdict}\n\ninstallationId: ${installationId}\n\n` +
+      `Note: the Payments app on the device keeps its own local state, so it can still ` +
+      `display "boarded" until it next contacts Adyen. A revoked instance cannot transact — ` +
+      `you must board the device again.`,
+      verdict.startsWith('⚠') ? 'error' : 'info'
+    );
+    showToast('Revoke completed — see dialog for verified state', 'info');
   } catch (err) {
+    ttpMessage(`Revoke error: ${err.message}`, 'error');
     showToast(`Revoke error: ${err.message}`, 'error');
   }
 }
