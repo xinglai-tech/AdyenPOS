@@ -501,7 +501,9 @@ function renderOrders() {
   $orderList.innerHTML = filtered.map(o => {
     const itemsSummary = (o.items || []).map(i => `${i.name} x${i.qty}`).join(', ');
     const time = new Date(o.createdAt).toLocaleTimeString();
-    const canRefund = (o.status === 'paid' || o.status === 'partially_refunded' || o.status === 'refund_failed') && o.poiTransactionId;
+    // Cloud Terminal API actions (status/cancel/reversal-refund) do not work for
+    // Tap to Pay Payments app orders, which are not connected over the cloud.
+    const canRefund = (o.status === 'paid' || o.status === 'partially_refunded' || o.status === 'refund_failed') && o.poiTransactionId && !o.viaTapToPay;
 
     return `
       <div class="order-card">
@@ -518,7 +520,7 @@ function renderOrders() {
           <span class="order-card-amount">${cur} ${(o.amount || 0).toFixed(2)}</span>
           <span class="order-card-time">${time}</span>
         </div>
-        ${o.status === 'pending' ? `
+        ${o.status === 'pending' && !o.viaTapToPay ? `
           <div class="order-card-actions">
             <button class="btn-check-order" onclick="queryOrderStatus('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Check Status</button>
             <button class="btn-cancel-order" onclick="cancelOrder('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Cancel</button>
@@ -709,7 +711,10 @@ async function confirmAddTerminal() {
 
 // ====================== Recover Pending Orders ======================
 async function recoverPendingOrders() {
-  const pendingOrders = state.orders.filter(o => o.status === 'pending');
+  // Tap to Pay (Payments app) orders use local App2App communication, not the
+  // cloud websocket, so a cloud TransactionStatus is always rejected with
+  // 'websocket not connected'. Their result arrives via the App Link return.
+  const pendingOrders = state.orders.filter(o => o.status === 'pending' && !o.viaTapToPay);
   if (pendingOrders.length === 0) return;
 
   showToast(`Checking ${pendingOrders.length} pending order(s)...`, 'info');
