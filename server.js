@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const http = require('http');
 const crypto = require('crypto');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
@@ -1136,6 +1137,12 @@ app.get('*', (_req, res) => {
 });
 
 // --------------- Start ---------------
-app.listen(PORT, () => {
+// The Tap to Pay Payments app returns its encrypted (~8KB) SaleToPOIResponse by
+// appending it as a query parameter to our return URL. Azure's reverse proxy
+// also duplicates the full URL into headers like X-Original-URL, so the request
+// line + headers can exceed Node's default 16KB maxHeaderSize and be rejected
+// with HTTP 431 before Express ever sees it. Raise the limit to accommodate it.
+const server = http.createServer({ maxHeaderSize: 64 * 1024 }, app);
+server.listen(PORT, () => {
   console.log(`POS Web App running at http://localhost:${PORT}`);
 });
