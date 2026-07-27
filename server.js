@@ -885,7 +885,11 @@ app.post('/api/taptopay/payment-result', async (req, res) => {
   }
 
   try {
-    const decoded = JSON.parse(Buffer.from(response, 'base64url').toString('utf-8'));
+    // Defensive: the Payments app returns a base64 blob in the URL. If any '+'
+    // survived as a space (URL decoding), restore it, and accept both the
+    // base64 and base64url alphabets before decoding the JSON envelope.
+    const normalized = String(response).replace(/ /g, '+').replace(/-/g, '+').replace(/_/g, '/');
+    const decoded = JSON.parse(Buffer.from(normalized, 'base64').toString('utf-8'));
     const secured = decoded.SaleToPOIResponse || decoded.SaleToPOIRequest;
     if (!secured || !secured.NexoBlob) {
       return res.status(400).json({ error: 'Unexpected response envelope', decoded });

@@ -1576,8 +1576,12 @@ async function handleTtpReturn() {
 
   if (step === 'pay') {
     openTtpModal();
+    // The Payments app returns a standard-base64 blob (which contains '+').
+    // URLSearchParams decodes '+' as a space, corrupting it, so read the raw
+    // query value and restore any '+' that were turned into spaces.
+    const rawResp = (window.location.search.match(/[?&]response=([^&]*)/) || [])[1] || '';
+    const encrypted = decodeURIComponent(rawResp).replace(/ /g, '+');
     clean();
-    const encrypted = params.get('response') || '';
     if (encrypted) {
       ttpMessage('Decrypting payment response...', 'info');
       try {
