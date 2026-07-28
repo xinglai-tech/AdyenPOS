@@ -266,6 +266,9 @@ html, body {
   flex: 6 1 0;
   min-height: 0;
   align-items: stretch;
+  /* Without this the settings panel and product grid overflow downwards and
+     visually overlap the cart when the viewport gets short. */
+  overflow: hidden;
 }
 #product-settings-row #product-section {
   padding: 0;
@@ -901,10 +904,14 @@ html, body {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 10px;
+  flex-shrink: 0;
 }
 
 .cart-items {
   flex: 1;
+  /* min-height:0 lets the list (not the header/footer) absorb the shrink, so
+     the cart title and totals never get squashed or overlapped. */
+  min-height: 0;
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -958,6 +965,7 @@ html, body {
   padding-top: 14px;
   border-top: 1px solid var(--border);
   margin-top: 12px;
+  flex-shrink: 0;
 }
 .cart-total { margin-bottom: 10px; display: flex; align-items: baseline; justify-content: space-between; }
 .total-label { font-size: .95rem; font-weight: 600; color: var(--text-light); }
@@ -1304,4 +1312,47 @@ html, body {
   .overlay-content { padding: 24px 20px; width: calc(100% - 32px); max-width: 420px; }
   .modal-sm { padding: 22px 18px; }
   #toast-container { left: 12px; right: 12px; }
+}
+
+/* ============ Responsive: short viewport (small height / landscape) ============ */
+/* The desktop layout splits the left column 6:4 between products and cart. When
+   the window gets short there is not enough room for either, so give both a
+   usable floor and let the column scroll rather than crushing the content. */
+@media (min-width: 769px) and (max-height: 760px) {
+  #left-col { overflow-y: auto; }
+  #product-settings-row { min-height: 21rem; }
+  #cart-section { min-height: 15rem; }
+}
+
+/* ============ Responsive: large screens & TV ============ */
+/* Almost every size in this file is expressed in rem, so raising the root font
+   size scales the whole interface proportionally. TVs are viewed from several
+   metres away, so the UI has to grow with the screen instead of staying at
+   desktop pixel sizes. The fixed-px panel widths are restated in rem here so
+   they scale along with everything else. */
+@media (min-width: 1600px) {
+  html { font-size: 18px; }
+  #app { grid-template-columns: 20rem 1fr; }
+  #right-col { width: 23.75rem; }
+  #settings-section { width: clamp(13rem, 20vw, 20rem); }
+  .product-grid { gap: 10px; }
+  .overlay-content { max-width: 30rem; }
+  .modal-sm { max-width: 26rem; }
+}
+
+@media (min-width: 2000px) {
+  html { font-size: 21px; }
+  .product-grid { gap: 12px; }
+}
+
+@media (min-width: 2560px) {
+  html { font-size: 26px; }
+  .product-grid { gap: 16px; }
+  .product-card { padding: 12px; }
+}
+
+@media (min-width: 3200px) {
+  html { font-size: 32px; }
+  .product-grid { gap: 22px; }
+  .product-card { padding: 16px; }
 }
