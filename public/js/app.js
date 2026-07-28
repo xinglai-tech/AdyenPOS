@@ -1377,9 +1377,28 @@ function initTapToPay() {
   renderTtpStatus();
 }
 
+// The Adyen Payments app exists only on Android, and the App Link handover it
+// relies on cannot work on any other platform, so Tap to Pay is blocked there.
+function isAndroidDevice() {
+  const uaData = navigator.userAgentData;
+  if (uaData && typeof uaData.platform === 'string' && uaData.platform) {
+    return /android/i.test(uaData.platform);
+  }
+  return /android/i.test(navigator.userAgent);
+}
+
 function openTtpModal() {
   ttpMessage('');
   renderTtpStatus();
+  if (!isAndroidDevice()) {
+    ttpMessage(
+      'Not supported on this device.\n\n' +
+      'Tap to Pay requires an Android device with the Adyen Payments app installed. ' +
+      'Open this page on an Android phone or tablet to board and take payments.',
+      'error'
+    );
+    showToast('Tap to Pay is only supported on Android', 'warning');
+  }
   TTP.modal.classList.remove('hidden');
 }
 
@@ -1428,9 +1447,23 @@ function renderTtpStatus() {
     TTP.btnPay.classList.add('hidden');
     TTP.btnRevoke.classList.add('hidden');
   }
+
+  // Boarding and paying both hand over to the Android Payments app, so they are
+  // disabled on every other platform. Revoking is a plain Management API call,
+  // so it stays available to clean up an installation from any device.
+  if (!isAndroidDevice()) {
+    TTP.btnBoard.disabled = true;
+    TTP.btnPay.disabled = true;
+  } else {
+    TTP.btnBoard.disabled = false;
+  }
 }
 
 function ttpStartBoarding() {
+  if (!isAndroidDevice()) {
+    ttpMessage('Not supported on this device — Tap to Pay requires Android.', 'error');
+    return;
+  }
   const store = TTP.storeInput.value.trim();
   if (!store) { showToast('Please enter a Store ID first', 'warning'); return; }
   localStorage.setItem('ttp_storeId', store);
@@ -1439,6 +1472,10 @@ function ttpStartBoarding() {
 }
 
 async function ttpStartPayment() {
+  if (!isAndroidDevice()) {
+    ttpMessage('Not supported on this device — Tap to Pay requires Android.', 'error');
+    return;
+  }
   const installationId = localStorage.getItem('ttp_installationId') || '';
   if (!installationId) { ttpMessage('Board the device first', 'error'); return; }
   const total = cartTotal();
