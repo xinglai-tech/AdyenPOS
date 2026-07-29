@@ -279,14 +279,20 @@ html, body {
 #product-settings-row #product-section {
   padding: 0;
   min-width: 0;
-  flex-shrink: 0;
+  flex-shrink: 1;
   width: fit-content;
+  /* fit-content can resolve wider than the space left by the settings panel on a
+     small laptop screen, which cut the last card column off. */
+  max-width: 100%;
 }
 
 /* ============ Settings Section ============ */
 #settings-section {
   width: clamp(180px, 20vw, 280px);
   flex-shrink: 1;
+  /* Without this the panel refuses to shrink below its buttons' content width and
+     pushes the product grid out of the row. */
+  min-width: 0;
 }
 #settings-section .section-title {
   margin-bottom: 14px;
@@ -405,13 +411,14 @@ html, body {
 }
 .settings-btn {
   width: 100%;
+  min-width: 0;
   /* Left-aligned so every icon sits at the same x position regardless of how long
-     its label is, and nowrap so the two-column grid stays one line per button. */
+     its label is. Labels wrap instead of forcing the column wider than the panel. */
   justify-content: flex-start;
   text-align: left;
-  white-space: nowrap;
+  white-space: normal;
   gap: 6px;
-  line-height: 1.2;
+  line-height: 1.25;
   padding: clamp(7px, 0.9vw, 11px) clamp(8px, 0.9vw, 12px) !important;
   font-size: clamp(.54rem, 0.95vw, .7rem) !important;
   border-radius: 10px !important;
