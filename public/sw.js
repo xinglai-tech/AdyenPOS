@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pos-v41';
+const CACHE_NAME = 'pos-v42';
 const PRECACHE = ['/', '/css/style.css', '/js/app.js', '/manifest.json'];
 
 self.addEventListener('install', (e) => {

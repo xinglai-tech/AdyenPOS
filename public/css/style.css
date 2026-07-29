@@ -1239,6 +1239,12 @@ html, body {
   background: #fff;
   padding: 2px 4px;
 }
+/* Cancel sits alone under the list, so give it a bigger touch target than the
+   default compact .btn used in other modals. */
+.modal-paymethod .overlay-actions .btn {
+  padding: 10px 30px;
+  font-size: .85rem;
+}
 
 /* ============ Mobile-only controls (hidden on desktop) ============ */
 .btn-orders-toggle {
