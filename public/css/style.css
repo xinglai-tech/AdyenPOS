@@ -1206,15 +1206,17 @@ html, body {
 .paymethod-btn {
   display: flex;
   align-items: center;
-  justify-content: center;
+  /* Left-aligned so all three logos share one x position; centring them made each
+     logo sit at a different offset depending on its label length. */
+  justify-content: flex-start;
   white-space: nowrap;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 7px 12px;
   background: rgba(0,0,0,.04);
   border: 1px solid rgba(0,0,0,.1);
   border-radius: 10px;
   color: #1d1d1f;
-  font-size: .8rem;
+  font-size: .88rem;
   font-weight: 600;
   line-height: 1.2;
   cursor: pointer;
@@ -1225,8 +1227,9 @@ html, body {
   border-color: var(--primary);
 }
 .paymethod-btn img {
-  width: 30px;
-  height: 22px;
+  width: 40px;
+  height: 28px;
+  flex-shrink: 0;
   object-fit: contain;
   border-radius: 4px;
   background: #fff;
