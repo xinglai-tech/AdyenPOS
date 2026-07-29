@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pos-v36';
+const CACHE_NAME = 'pos-v37';
 const PRECACHE = ['/', '/css/style.css', '/js/app.js', '/manifest.json'];
 
 self.addEventListener('install', (e) => {
@@ -25,7 +25,11 @@ self.addEventListener('fetch', (e) => {
     fetch(e.request)
       .then(res => {
         const clone = res.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(e.request, clone));
+        // Opaque cross-origin responses (CDN font/icon files) cannot be cached, so
+        // swallow that rejection instead of letting it surface as unhandled.
+        caches.open(CACHE_NAME)
+          .then(cache => cache.put(e.request, clone))
+          .catch(() => {});
         return res;
       })
       .catch(() => caches.match(e.request))

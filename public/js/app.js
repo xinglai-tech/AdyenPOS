@@ -181,6 +181,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('terminal-display').style.display = state.isAsync ? '' : 'none';
   setupSSE();
   bindEvents();
+  refreshIcons();
   initTapToPay();
   await handleTtpReturn();
   if (state.config.poiId) checkTerminal();
@@ -551,17 +552,25 @@ function renderOrders() {
         </div>
         ${o.status === 'pending' && !o.viaTapToPay ? `
           <div class="order-card-actions">
-            <button class="btn-check-order" onclick="queryOrderStatus('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Check Status</button>
-            <button class="btn-cancel-order" onclick="cancelOrder('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Cancel</button>
+            <button class="btn-check-order" onclick="queryOrderStatus('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}><i data-lucide="search"></i>Check Status</button>
+            <button class="btn-cancel-order" onclick="cancelOrder('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}><i data-lucide="x"></i>Cancel</button>
           </div>` : ''}
         ${canRefund || canReprint ? `
           <div class="order-card-actions">
-            ${canRefund ? `<button class="btn-refund" onclick="promptRefund('${o.id}')" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Refund</button>` : ''}
-            ${canReprint ? `<button class="btn-reprint" onclick="reprintReceipt('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Print Receipt</button>` : ''}
+            ${canRefund ? `<button class="btn-refund" onclick="promptRefund('${o.id}')" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}><i data-lucide="rotate-ccw"></i>Refund</button>` : ''}
+            ${canReprint ? `<button class="btn-reprint" onclick="reprintReceipt('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}><i data-lucide="printer"></i>Print Receipt</button>` : ''}
           </div>` : ''}
       </div>
     `;
   }).join('');
+  refreshIcons();
+}
+
+// Lucide replaces every `data-lucide` placeholder with an inline SVG, so it has to
+// run again after any render that injects markup. Guarded because the library is
+// loaded from a CDN: if that fails, the buttons still show their text labels.
+function refreshIcons() {
+  if (window.lucide?.createIcons) window.lucide.createIcons();
 }
 
 // A POI ID is "<model>-<serial>", e.g. "V400m-346536527", so the model prefix

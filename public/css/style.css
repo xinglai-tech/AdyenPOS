@@ -23,7 +23,7 @@
 
 html, body {
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
   background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
@@ -147,7 +147,7 @@ html, body {
   justify-content: space-between;
   align-items: center;
 }
-.order-card-amount { font-weight: 700; font-size: .95rem; }
+.order-card-amount { font-weight: 700; font-size: .95rem; font-variant-numeric: tabular-nums; }
 .order-card-time { font-size: .68rem; color: rgba(255,255,255,.6); }
 
 .btn-refund,
@@ -971,10 +971,32 @@ html, body {
 }
 .cart-total { margin-bottom: 10px; display: flex; align-items: baseline; justify-content: space-between; }
 .total-label { font-size: .95rem; font-weight: 600; color: var(--text-light); }
-.total-amount { font-size: 1.25rem; font-weight: 800; color: var(--text); }
+.total-amount { font-size: 1.25rem; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
 .cart-actions { display: flex; gap: 150px; width: 50%; margin: 0 auto; }
 
 /* ============ Buttons ============ */
+/* Lucide swaps each `data-lucide` element for an inline SVG that inherits colour
+   from the button, so only the size and alignment need setting here. */
+.btn svg,
+.btn-refund svg,
+.btn-reprint svg,
+.btn-check-order svg,
+.btn-cancel-order svg {
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+  stroke-width: 2.2;
+}
+.btn-refund,
+.btn-reprint,
+.btn-check-order,
+.btn-cancel-order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
 .btn {
   border: none;
   border-radius: 980px;
@@ -989,8 +1011,10 @@ html, body {
   letter-spacing: -.01em;
 }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
-.btn-primary { background: #1d1d1f; color: #fff; }
-.btn-primary:hover:not(:disabled) { background: #333; }
+.btn:not(:disabled):active { transform: scale(.97); }
+.btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.btn-primary { background: #1d1d1f; color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.18); }
+.btn-primary:hover:not(:disabled) { background: #333; box-shadow: 0 4px 12px rgba(0,0,0,.22); }
 .btn-danger { background: var(--danger); color: #fff; }
 .btn-danger:hover:not(:disabled) { background: var(--danger-hover); }
 .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }

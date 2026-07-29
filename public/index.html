@@ -8,6 +8,9 @@
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛒</text></svg>" />
   <title>POS Terminal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
@@ -52,10 +55,10 @@
                 </div>
                 <!-- Action buttons -->
                 <div class="settings-buttons">
-                  <button id="btn-check-terminal" class="btn btn-outline settings-btn">Check terminal status</button>
-                  <button id="btn-add-terminal" class="btn btn-outline settings-btn">Add terminal</button>
-                  <button id="btn-ttp-open" class="btn btn-outline settings-btn">Tap to Pay Android</button>
-                  <button id="btn-toggle-log" class="btn btn-outline settings-btn">Show API response</button>
+                  <button id="btn-check-terminal" class="btn btn-outline settings-btn"><i data-lucide="activity"></i>Check terminal status</button>
+                  <button id="btn-add-terminal" class="btn btn-outline settings-btn"><i data-lucide="plus-circle"></i>Add terminal</button>
+                  <button id="btn-ttp-open" class="btn btn-outline settings-btn"><i data-lucide="smartphone-nfc"></i>Tap to Pay Android</button>
+                  <button id="btn-toggle-log" class="btn btn-outline settings-btn"><i data-lucide="terminal"></i>Show API response</button>
                 </div>
                 <!-- Payment Mode -->
                 <div class="settings-group settings-mode">
@@ -94,8 +97,8 @@
                 <span id="cart-total-amount" class="total-amount">0.00</span>
               </div>
               <div class="cart-actions">
-                <button id="btn-clear-cart" class="btn btn-outline btn-action">Clear Cart</button>
-                <button id="btn-pay" class="btn btn-primary btn-action" disabled>Pay Now</button>
+                <button id="btn-clear-cart" class="btn btn-outline btn-action"><i data-lucide="trash-2"></i>Clear Cart</button>
+                <button id="btn-pay" class="btn btn-primary btn-action" disabled><i data-lucide="credit-card"></i>Pay Now</button>
               </div>
             </div>
           </section>
@@ -234,6 +237,7 @@
   <!-- Toast container -->
   <div id="toast-container"></div>
 
+  <script src="https://unpkg.com/lucide@0.454.0/dist/umd/lucide.min.js"></script>
   <script src="/js/app.js"></script>
 </body>
 </html>
