@@ -1365,6 +1365,9 @@ html, body {
   /* Modals: fit small screens */
   .overlay-content { padding: 24px 20px; width: calc(100% - 32px); max-width: 420px; }
   .modal-sm { padding: 22px 18px; }
+  /* Restated because the .overlay-content rule above has the same specificity but
+     comes later in the file, so it would otherwise win and widen this modal. */
+  .modal-paymethod { max-width: 270px; padding: 26px 18px; }
   #toast-container { left: 12px; right: 12px; }
 }
 
