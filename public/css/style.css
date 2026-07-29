@@ -1194,26 +1194,29 @@ html, body {
 .refund-result.processing { background: rgba(0,113,227,.08); color: var(--primary); }
 
 /* ============ Payment Method Modal ============ */
-.modal-paymethod { max-width: 300px; padding: 28px 24px; }
+.modal-paymethod { max-width: 320px; padding: 28px 24px; }
 .paymethod-grid {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin: 18px 0;
+  gap: 14px;
+  /* Narrow, centred column: full-width rows looked stretched in the modal. */
+  width: 62%;
+  margin: 20px auto;
 }
 .paymethod-btn {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
+  justify-content: center;
+  white-space: nowrap;
+  gap: 10px;
+  padding: 10px 12px;
   background: rgba(0,0,0,.04);
   border: 1px solid rgba(0,0,0,.1);
   border-radius: 10px;
   color: #1d1d1f;
-  font-size: .85rem;
+  font-size: .8rem;
   font-weight: 600;
   line-height: 1.2;
-  text-align: left;
   cursor: pointer;
   transition: all .2s;
 }
@@ -1222,8 +1225,8 @@ html, body {
   border-color: var(--primary);
 }
 .paymethod-btn img {
-  width: 34px;
-  height: 24px;
+  width: 30px;
+  height: 22px;
   object-fit: contain;
   border-radius: 4px;
   background: #fff;
