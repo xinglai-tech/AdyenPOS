@@ -291,7 +291,7 @@ html, body {
   /* Wide enough that both button columns hold their labels on one line, which is
      what keeps the panel short enough to fit the row. In rem at the top end so it
      keeps up with the larger root font used on big screens. */
-  width: clamp(13.75rem, 29vw, 25rem);
+  width: clamp(11.5rem, 22vw, 20rem);
   flex-shrink: 1;
   /* Without this the panel refuses to shrink below its buttons' content width and
      pushes the product grid out of the row. */
@@ -427,7 +427,7 @@ html, body {
   gap: 6px;
   line-height: 1.25;
   padding: clamp(7px, 0.9vw, 11px) clamp(8px, 0.9vw, 12px) !important;
-  font-size: clamp(.54rem, 0.95vw, .7rem) !important;
+  font-size: clamp(.58rem, 1vw, .74rem) !important;
   border-radius: 10px !important;
 }
 .settings-mode {
