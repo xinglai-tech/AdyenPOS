@@ -517,6 +517,13 @@ app.post('/api/transaction-status', async (req, res) => {
 // right-align values against their labels.
 const RECEIPT_PRINT_WIDTH = parseInt(process.env.RECEIPT_PRINT_WIDTH || '32', 10);
 
+// Technical card and acquirer details that Adyen puts on the receipt but that are
+// noise for the shopper. Dropped when we render our own printout.
+const RECEIPT_HIDDEN_KEYS = new Set([
+  'panSeq', 'preferredName', 'cardType', 'paymentMethodVariant', 'posEntryMode',
+  'aid', 'mid', 'tid', 'ptid', 'authCode', 'txRef'
+]);
+
 // Pull the receipt data out of either a PaymentResponse or the PaymentResponse
 // nested inside a TransactionStatusResponse, so the same helper works for a
 // stored payment response and for a freshly fetched transaction status.
@@ -548,6 +555,7 @@ function buildReceiptOutputText(items, insertions = {}) {
       lines.push(...insertions[key]);
       inserted.add(key);
     }
+    if (RECEIPT_HIDDEN_KEYS.has(key)) continue;
     const style = (item?.CharacterStyle === 'Bold' || item?.CharacterStyle === 'Underline')
       ? item.CharacterStyle
       : 'Normal';
@@ -573,6 +581,30 @@ function buildReceiptOutputText(items, insertions = {}) {
     if (!inserted.has(key)) lines.push(...extra);
   }
   return lines;
+}
+
+// Removing fields leaves the surrounding "filler" separators stacked up, so drop
+// leading and repeated blank lines to keep the printout tight.
+function collapseBlankLines(lines) {
+  const out = [];
+  for (const line of lines) {
+    const isBlank = !line.Text;
+    if (isBlank && (out.length === 0 || !out[out.length - 1].Text)) continue;
+    out.push(line);
+  }
+  return out;
+}
+
+// The PSP reference is the identifier used to look the payment up in the Customer
+// Area, so it is worth printing even though Adyen's receipt data omits it.
+function buildPspLines(order) {
+  if (!order?.pspReference) return [];
+  const label = 'PSP ref.';
+  const gap = RECEIPT_PRINT_WIDTH - label.length - order.pspReference.length;
+  return [{
+    Text: gap > 0 ? label + ' '.repeat(gap) + order.pspReference : `${label} ${order.pspReference}`,
+    EndOfLineFlag: true
+  }];
 }
 
 // Renders the purchased products as receipt lines. Adyen's receipt data only
@@ -652,11 +684,14 @@ app.post('/api/reprint-receipt', async (req, res) => {
       });
     }
 
-    const outputText = [
+    const outputText = collapseBlankLines([
       { Text: 'DUPLICATE RECEIPT', CharacterStyle: 'Bold', Alignment: 'Centred', EndOfLineFlag: true },
       { Text: '', EndOfLineFlag: true },
-      ...buildReceiptOutputText(items, { totalAmount: buildItemLines(order) })
-    ];
+      ...buildReceiptOutputText(items, {
+        mref: buildPspLines(order),
+        totalAmount: buildItemLines(order)
+      })
+    ]);
 
     const printPayload = {
       SaleToPOIRequest: {
