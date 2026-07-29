@@ -401,11 +401,15 @@ html, body {
 }
 .settings-btn {
   width: 100%;
-  text-align: center;
-  justify-content: center;
-  line-height: 1.25;
-  padding: clamp(7px, 0.9vw, 11px) clamp(6px, 0.8vw, 10px) !important;
-  font-size: clamp(.62rem, 1.1vw, .78rem) !important;
+  /* Left-aligned so every icon sits at the same x position regardless of how long
+     its label is, and nowrap so the two-column grid stays one line per button. */
+  justify-content: flex-start;
+  text-align: left;
+  white-space: nowrap;
+  gap: 6px;
+  line-height: 1.2;
+  padding: clamp(7px, 0.9vw, 11px) clamp(8px, 0.9vw, 12px) !important;
+  font-size: clamp(.54rem, 0.95vw, .7rem) !important;
   border-radius: 10px !important;
 }
 .settings-mode {
@@ -1190,39 +1194,36 @@ html, body {
 .refund-result.processing { background: rgba(0,113,227,.08); color: var(--primary); }
 
 /* ============ Payment Method Modal ============ */
-.modal-paymethod { max-width: 400px; }
+.modal-paymethod { max-width: 300px; padding: 28px 24px; }
 .paymethod-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   margin: 18px 0;
 }
 .paymethod-btn {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
-  gap: 9px;
-  padding: 14px 6px;
+  gap: 12px;
+  padding: 10px 14px;
   background: rgba(0,0,0,.04);
   border: 1px solid rgba(0,0,0,.1);
-  border-radius: 12px;
+  border-radius: 10px;
   color: #1d1d1f;
-  font-size: .75rem;
+  font-size: .85rem;
   font-weight: 600;
   line-height: 1.2;
-  text-align: center;
+  text-align: left;
   cursor: pointer;
   transition: all .2s;
 }
 .paymethod-btn:hover {
   background: rgba(0,0,0,.08);
   border-color: var(--primary);
-  transform: translateY(-2px);
 }
 .paymethod-btn img {
-  width: 42px;
-  height: 30px;
+  width: 34px;
+  height: 24px;
   object-fit: contain;
   border-radius: 4px;
   background: #fff;
