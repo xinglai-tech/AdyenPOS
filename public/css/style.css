@@ -1198,13 +1198,14 @@ html, body {
 .refund-result.processing { background: rgba(0,113,227,.08); color: var(--primary); }
 
 /* ============ Payment Method Modal ============ */
-.modal-paymethod { max-width: 320px; padding: 28px 24px; }
+.modal-paymethod { max-width: 270px; padding: 26px 18px; }
 .paymethod-grid {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  /* Narrow, centred column: full-width rows looked stretched in the modal. */
-  width: 62%;
+  /* Narrow, centred column: full-width rows looked stretched in the modal. The
+     percentage is tuned so the longest label still fits on one line. */
+  width: 72%;
   margin: 22px auto;
 }
 .paymethod-btn {
