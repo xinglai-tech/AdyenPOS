@@ -303,6 +303,10 @@ html, body {
   border-radius: var(--radius);
   padding: 14px;
   flex: 1;
+  /* The parent row clips its overflow, so scroll here instead of letting the
+     Payment Mode toggle get cut off when the buttons wrap onto two lines. */
+  min-height: 0;
+  overflow-y: auto;
 }
 #settings-section {
   display: flex;
