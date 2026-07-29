@@ -28,6 +28,10 @@ html, body {
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Mobile browsers otherwise inflate text in some blocks, which makes the layout
+     look zoomed in and pushes content past the viewport edge. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 /* ============ App Layout ============ */
@@ -1300,11 +1304,13 @@ html, body {
   #settings-section .settings-inner { flex: none; }
   #product-settings-row #product-section { width: 100%; flex: none; }
 
-  /* Larger, touch-friendly settings buttons */
-  .settings-buttons { gap: 10px; }
+  /* Larger, touch-friendly settings buttons. One per row: two nowrap columns at
+     this font size are wider than a phone viewport and pushed the page sideways. */
+  .settings-buttons { grid-template-columns: 1fr; gap: 10px; }
   .settings-btn {
     padding: 11px 14px !important;
     font-size: .92rem !important;
+    white-space: normal;
   }
 
   /* Product grid: 3 per row, square cards, auto height */
