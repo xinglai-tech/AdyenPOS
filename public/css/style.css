@@ -37,9 +37,9 @@ html, body {
 /* ============ App Layout ============ */
 #app {
   display: grid;
-  /* Fluid so the order cards get more room on wide screens; the rem bounds also
-     track the larger root font size used on big displays. */
-  grid-template-columns: clamp(16rem, 22vw, 26rem) 1fr;
+  /* Kept deliberately narrow so the middle column stays usable when the API log
+     opens alongside it. The rem bounds track the larger root font on big displays. */
+  grid-template-columns: clamp(13rem, 17vw, 20rem) 1fr;
   height: 100vh;
   overflow: hidden;
 }
