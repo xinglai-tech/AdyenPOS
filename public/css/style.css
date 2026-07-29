@@ -37,9 +37,9 @@ html, body {
 /* ============ App Layout ============ */
 #app {
   display: grid;
-  /* Kept deliberately narrow so the middle column stays usable when the API log
-     opens alongside it. The rem bounds track the larger root font on big displays. */
-  grid-template-columns: clamp(13rem, 17vw, 20rem) 1fr;
+  /* Fixed width: a fluid track made the order cards narrow enough to wrap their
+     text on laptop screens. */
+  grid-template-columns: 320px 1fr;
   height: 100vh;
   overflow: hidden;
 }
@@ -1402,10 +1402,11 @@ html, body {
 /* Almost every size in this file is expressed in rem, so raising the root font
    size scales the whole interface proportionally. TVs are viewed from several
    metres away, so the UI has to grow with the screen instead of staying at
-   desktop pixel sizes. The order and settings panels already use rem-bounded
-   clamps, so they scale without being restated here. */
+   desktop pixel sizes. The fixed-px panel widths are restated in rem here so
+   they scale along with everything else. */
 @media (min-width: 1600px) {
   html { font-size: 18px; }
+  #app { grid-template-columns: 20rem 1fr; }
   #right-col { width: 23.75rem; }
   .product-grid { gap: 10px; }
   .overlay-content { max-width: 30rem; }
