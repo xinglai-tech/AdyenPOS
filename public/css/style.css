@@ -290,10 +290,10 @@ html, body {
 
 /* ============ Settings Section ============ */
 #settings-section {
-  /* Wide enough that both button columns hold their labels on one line, which is
-     what keeps the panel short enough to fit the row. In rem at the top end so it
-     keeps up with the larger root font used on big screens. */
-  width: clamp(11.5rem, 22vw, 20rem);
+  /* Takes a bigger share than the product grid needs to give up, so the terminal
+     list and the two button columns stay comfortable on laptop screens. In rem at
+     the top end so it keeps up with the larger root font used on big screens. */
+  width: clamp(11.5rem, 26vw, 24rem);
   flex-shrink: 1;
   /* Without this the panel refuses to shrink below its buttons' content width and
      pushes the product grid out of the row. */
