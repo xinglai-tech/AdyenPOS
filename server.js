@@ -23,6 +23,12 @@ function getActivePoiId() {
   return t ? t.poiId : '';
 }
 
+// Terminal models with a built-in receipt printer. A POI ID looks like
+// "V400m-346536527", so the part before the first dash is the model name and is
+// enough to decide whether a reprint button makes sense for an order.
+const PRINTER_MODEL_PREFIXES = (process.env.PRINTER_TERMINAL_MODELS || 'S1F2,S1F4,V400,V240')
+  .split(',').map(s => s.trim()).filter(Boolean);
+
 // --------------- Tap to Pay (Android Payments app) config ---------------
 const PAYMENTS_APP_MGMT_BASE = 'https://management-test.adyen.com/v1';
 const PAYMENTS_APP_DEFAULT_STORE = process.env.ADYEN_PAYMENTS_APP_STORE_ID || 'ST32CQ6223229X5PBQCM9BCWF';
@@ -326,6 +332,7 @@ app.get('/api/config', (req, res) => {
     maxTerminals: MAX_TERMINALS,
     saleId: process.env.ADYEN_SALE_ID || 'POSWebApp',
     merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT || '',
+    printerModels: PRINTER_MODEL_PREFIXES,
     currency: process.env.CURRENCY || 'EUR',
     sessionId: (req.auth && req.auth.sid) || '',
     tapToPay: {
@@ -452,8 +459,11 @@ app.post('/api/transaction-status', async (req, res) => {
     SaleToPOIRequest: {
       MessageHeader: header,
       TransactionStatusRequest: {
-        ReceiptReprintFlag: true,
-        DocumentQualifier: ['CashierReceipt', 'CustomerReceipt'],
+        // Deliberately false: this endpoint is also used by automatic pending-order
+        // recovery, and reprinting a receipt on every status poll would make the
+        // terminal spit out paper without the user asking for it. Reprinting is
+        // handled explicitly by /api/reprint-receipt.
+        ReceiptReprintFlag: false,
         MessageReference: {
           MessageCategory: 'Payment',
           ServiceID: serviceId,
@@ -497,6 +507,59 @@ app.post('/api/transaction-status', async (req, res) => {
     }
 
     res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --------------- API: Reprint Receipt ---------------
+// Reprints the shopper receipt of an earlier payment on the terminal that took
+// it, using a TransactionStatus request with ReceiptReprintFlag. Only works for
+// cloud-connected terminals with a built-in printer: the Payments app (Tap to
+// Pay) does not support ReceiptReprintFlag at all.
+app.post('/api/reprint-receipt', async (req, res) => {
+  const { serviceId } = req.body;
+  const order = orders.find(o => o.serviceId === serviceId);
+  if (!order) return res.status(404).json({ error: 'Order not found' });
+  if (order.viaTapToPay) {
+    return res.status(400).json({ error: 'Receipt reprint is not supported for Tap to Pay payments' });
+  }
+  const poiId = order.terminalId || getActivePoiId();
+  if (!poiId) return res.status(400).json({ error: 'No terminal is selected' });
+
+  const header = makeHeader('TransactionStatus');
+  header.POIID = poiId;
+
+  const payload = {
+    SaleToPOIRequest: {
+      MessageHeader: header,
+      TransactionStatusRequest: {
+        ReceiptReprintFlag: true,
+        DocumentQualifier: ['CustomerReceipt'],
+        MessageReference: {
+          MessageCategory: 'Payment',
+          ServiceID: serviceId,
+          SaleID: process.env.ADYEN_SALE_ID || 'POSWebApp',
+          POIID: poiId
+        }
+      }
+    }
+  };
+
+  try {
+    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
+    const response = data?.SaleToPOIResponse?.TransactionStatusResponse?.Response;
+    const result = response?.Result;
+    if (result === 'Success') {
+      return res.json({ success: true, adyenResponse: data });
+    }
+    // The terminal only keeps recent transactions, so older orders commonly come
+    // back as NotFound. Say so instead of showing a bare error condition.
+    const errorCondition = response?.ErrorCondition || '';
+    const error = errorCondition === 'NotFound'
+      ? 'The terminal no longer has this transaction stored, so it cannot reprint the receipt.'
+      : `Reprint failed${errorCondition ? ` (${errorCondition})` : ''}`;
+    res.status(400).json({ error, errorCondition, adyenResponse: data });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

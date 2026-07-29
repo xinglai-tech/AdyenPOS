@@ -150,7 +150,8 @@ html, body {
 .order-card-amount { font-weight: 700; font-size: .95rem; }
 .order-card-time { font-size: .68rem; color: rgba(255,255,255,.6); }
 
-.btn-refund {
+.btn-refund,
+.btn-reprint {
   display: block;
   width: 100%;
   margin-top: 8px;
@@ -165,11 +166,13 @@ html, body {
   cursor: pointer;
   transition: all .2s;
 }
-.btn-refund:hover:not(:disabled) {
+.btn-refund:hover:not(:disabled),
+.btn-reprint:hover:not(:disabled) {
   background: rgba(255,255,255,.12);
   color: #fff;
 }
-.btn-refund:disabled {
+.btn-refund:disabled,
+.btn-reprint:disabled {
   opacity: .3;
   cursor: not-allowed;
 }

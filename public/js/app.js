@@ -517,6 +517,9 @@ function renderOrders() {
     // Cloud Terminal API actions (status/cancel/reversal-refund) do not work for
     // Tap to Pay Payments app orders, which are not connected over the cloud.
     const canRefund = (o.status === 'paid' || o.status === 'partially_refunded' || o.status === 'refund_failed') && o.poiTransactionId && !o.viaTapToPay;
+    // Reprinting uses ReceiptReprintFlag, which Adyen does not support for the
+    // Android Payments app, and only makes sense on terminals with a printer.
+    const canReprint = o.status === 'paid' && !o.viaTapToPay && terminalHasPrinter(o.terminalId);
 
     return `
       <div class="order-card">
@@ -538,10 +541,43 @@ function renderOrders() {
             <button class="btn-check-order" onclick="queryOrderStatus('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Check Status</button>
             <button class="btn-cancel-order" onclick="cancelOrder('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Cancel</button>
           </div>` : ''}
+        ${canReprint ? `<button class="btn-reprint" onclick="reprintReceipt('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Print Receipt</button>` : ''}
         ${canRefund ? `<button class="btn-refund" onclick="promptRefund('${o.id}')" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Refund</button>` : ''}
       </div>
     `;
   }).join('');
+}
+
+// A POI ID is "<model>-<serial>", e.g. "V400m-346536527", so the model prefix
+// tells us whether the terminal has a built-in receipt printer.
+function terminalHasPrinter(poiId) {
+  if (!poiId) return false;
+  const model = String(poiId).split('-')[0].toUpperCase();
+  const prefixes = state.config.printerModels || [];
+  return prefixes.some(p => model.startsWith(String(p).toUpperCase()));
+}
+
+async function reprintReceipt(serviceId, btn) {
+  const original = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Printing...'; }
+  try {
+    const res = await fetch('/api/reprint-receipt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serviceId })
+    });
+    const data = await res.json();
+    showApiResponse('Reprint Receipt', data.adyenResponse || data);
+    if (res.ok) {
+      showToast('Receipt sent to the terminal', 'success');
+    } else {
+      showToast(data.error || 'Reprint failed', 'error');
+    }
+  } catch (err) {
+    showToast(`Reprint failed: ${err.message}`, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = original; }
+  }
 }
 
 function formatStatus(s) {
