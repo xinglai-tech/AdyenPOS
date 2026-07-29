@@ -196,12 +196,25 @@ async function loadConfig() {
 // ====================== SSE ======================
 function setupSSE() {
   const es = new EventSource('/api/events');
+  let _sawInit = false;
 
-  es.addEventListener('init', (e) => {
+  es.addEventListener('init', async (e) => {
     state.orders = JSON.parse(e.data);
     renderOrders();
     _sseReady = true;
     tryRecoverPending();
+
+    // A second `init` means EventSource reconnected, which usually means the
+    // server restarted and lost its in-memory terminal list. Re-sync the config
+    // so this page stops showing a terminal the server no longer considers
+    // active. No user interaction required.
+    if (_sawInit) {
+      await loadConfig();
+      renderTerminals();
+      showToast('Reconnected to server — terminal list refreshed', 'info');
+      if (state.config.poiId) checkTerminal({ silent: true });
+    }
+    _sawInit = true;
   });
 
   es.addEventListener('orderUpdate', (e) => {
@@ -621,17 +634,19 @@ async function deleteTerminal(poiId) {
 }
 
 // ====================== Terminal Check ======================
-async function checkTerminal() {
+async function checkTerminal(opts) {
+  const silent = !!(opts && opts.silent === true);
   const list = state.config.terminals || [];
   if (list.length === 0) {
-    showToast('No terminals to check', 'warning');
+    if (!silent) showToast('No terminals to check', 'warning');
+    renderTerminals();
     return;
   }
 
   try {
     const res = await fetch('/api/terminals', { method: 'POST' });
     const data = await res.json();
-    showApiResponse('Connected Terminals', data);
+    if (!silent) showApiResponse('Connected Terminals', data);
     const onlineList = data.uniqueTerminalIds || [];
     state._terminalOnlineSet = new Set(onlineList);
     state._terminalChecked = true;
@@ -640,7 +655,7 @@ async function checkTerminal() {
     state.terminalOnline = onlineList.includes(activePoiId);
 
     const onlineCount = list.filter(t => onlineList.includes(t.poiId)).length;
-    showToast(`${onlineCount}/${list.length} terminal(s) online`, onlineCount > 0 ? 'success' : 'warning');
+    if (!silent) showToast(`${onlineCount}/${list.length} terminal(s) online`, onlineCount > 0 ? 'success' : 'warning');
 
     if (state.terminalOnline) {
       _terminalReady = true;
@@ -649,7 +664,7 @@ async function checkTerminal() {
   } catch (err) {
     state.terminalOnline = false;
     state._terminalOnlineSet = new Set();
-    showToast(`Terminal check failed: ${err.message}`, 'error');
+    if (!silent) showToast(`Terminal check failed: ${err.message}`, 'error');
   }
   renderTerminals();
 }
