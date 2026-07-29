@@ -290,10 +290,10 @@ html, body {
 
 /* ============ Settings Section ============ */
 #settings-section {
-  /* Takes a bigger share than the product grid needs to give up, so the terminal
-     list and the two button columns stay comfortable on laptop screens. In rem at
-     the top end so it keeps up with the larger root font used on big screens. */
-  width: clamp(11.5rem, 26vw, 24rem);
+  /* A share of the row, not of the viewport: opening the API log narrows the row, and
+     this way the panel gives width back to the product grid instead of keeping it.
+     The rem bounds still track the larger root font used on big screens. */
+  width: clamp(11.5rem, 35%, 24rem);
   /* Must not shrink: the product grid's fit-content basis is wider than the row, so
      flex would take the overflow off both items in proportion and widening this one
      had almost no visible effect. The clamp keeps it well inside the row anyway. */
