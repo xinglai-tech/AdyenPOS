@@ -512,11 +512,65 @@ app.post('/api/transaction-status', async (req, res) => {
   }
 });
 
+// --------------- Receipt printing helpers ---------------
+// Number of characters per line on the terminal's receipt printer. Used to
+// right-align values against their labels.
+const RECEIPT_PRINT_WIDTH = parseInt(process.env.RECEIPT_PRINT_WIDTH || '32', 10);
+
+// Pull the receipt data out of either a PaymentResponse or the PaymentResponse
+// nested inside a TransactionStatusResponse, so the same helper works for a
+// stored payment response and for a freshly fetched transaction status.
+function extractPaymentReceipt(root, qualifier = 'CustomerReceipt') {
+  const sale = root?.SaleToPOIResponse || root;
+  const paymentResponse = sale?.PaymentResponse
+    || sale?.TransactionStatusResponse?.RepeatedMessageResponse?.RepeatedResponseMessageBody?.PaymentResponse;
+  const receipts = paymentResponse?.PaymentReceipt;
+  if (!Array.isArray(receipts) || receipts.length === 0) return null;
+  const match = receipts.find(r => r?.DocumentQualifier === qualifier) || receipts[0];
+  const items = match?.OutputContent?.OutputText;
+  return Array.isArray(items) && items.length > 0 ? items : null;
+}
+
+// Adyen returns receipt lines as form-encoded key/name/value triplets, e.g.
+// "name=Date&value=29%2f07%2f2026&key=txdate". The printer needs plain text, so
+// render each line as a label on the left and its value right-aligned.
+function buildReceiptOutputText(items) {
+  const lines = [];
+  for (const item of items) {
+    const raw = typeof item?.Text === 'string' ? item.Text : '';
+    const params = new URLSearchParams(raw);
+    const key = params.get('key') || '';
+    const name = params.get('name');
+    const value = params.get('value');
+    const style = (item?.CharacterStyle === 'Bold' || item?.CharacterStyle === 'Underline')
+      ? item.CharacterStyle
+      : 'Normal';
+
+    if (!name && !value) {
+      // "filler" is an intentional blank line; empty headerN/footerN entries are
+      // unconfigured merchant header slots and would print as stray blank lines.
+      if (key === 'filler') lines.push({ Text: '', EndOfLineFlag: true });
+      continue;
+    }
+    if (!value) {
+      lines.push({ Text: name, CharacterStyle: style, Alignment: 'Centred', EndOfLineFlag: true });
+      continue;
+    }
+    const label = name || '';
+    const gap = RECEIPT_PRINT_WIDTH - label.length - value.length;
+    const text = gap > 0 ? label + ' '.repeat(gap) + value : `${label} ${value}`;
+    lines.push({ Text: text, CharacterStyle: style, EndOfLineFlag: true });
+  }
+  return lines;
+}
+
 // --------------- API: Reprint Receipt ---------------
 // Reprints the shopper receipt of an earlier payment on the terminal that took
-// it, using a TransactionStatus request with ReceiptReprintFlag. Only works for
-// cloud-connected terminals with a built-in printer: the Payments app (Tap to
-// Pay) does not support ReceiptReprintFlag at all.
+// it. ReceiptReprintFlag on a TransactionStatus request does not reliably put
+// paper out (it mainly returns the receipt data), so this instead renders the
+// receipt data into text and sends an explicit Terminal API Print request.
+// Requires a cloud-connected terminal with a built-in printer; the Payments app
+// (Tap to Pay) cannot print at all.
 app.post('/api/reprint-receipt', async (req, res) => {
   const { serviceId } = req.body;
   const order = orders.find(o => o.serviceId === serviceId);
@@ -527,39 +581,85 @@ app.post('/api/reprint-receipt', async (req, res) => {
   const poiId = order.terminalId || getActivePoiId();
   if (!poiId) return res.status(400).json({ error: 'No terminal is selected' });
 
-  const header = makeHeader('TransactionStatus');
-  header.POIID = poiId;
+  try {
+    // Prefer the receipt data already stored with the order: it survives even
+    // after the terminal has dropped the transaction from its local history.
+    let items = extractPaymentReceipt(order.response);
+    let statusResponse = null;
 
-  const payload = {
-    SaleToPOIRequest: {
-      MessageHeader: header,
-      TransactionStatusRequest: {
-        ReceiptReprintFlag: true,
-        DocumentQualifier: ['CustomerReceipt'],
-        MessageReference: {
-          MessageCategory: 'Payment',
-          ServiceID: serviceId,
+    if (!items) {
+      const statusHeader = makeHeader('TransactionStatus');
+      statusHeader.POIID = poiId;
+      statusResponse = await adyenRequest('https://terminal-api-test.adyen.com/sync', {
+        SaleToPOIRequest: {
+          MessageHeader: statusHeader,
+          TransactionStatusRequest: {
+            ReceiptReprintFlag: false,
+            DocumentQualifier: ['CustomerReceipt'],
+            MessageReference: {
+              MessageCategory: 'Payment',
+              ServiceID: serviceId,
+              SaleID: process.env.ADYEN_SALE_ID || 'POSWebApp',
+              POIID: poiId
+            }
+          }
+        }
+      });
+      items = extractPaymentReceipt(statusResponse);
+    }
+
+    if (!items) {
+      const errorCondition = statusResponse?.SaleToPOIResponse?.TransactionStatusResponse?.Response?.ErrorCondition || '';
+      return res.status(400).json({
+        error: errorCondition === 'NotFound'
+          ? 'The terminal no longer has this transaction stored, so its receipt cannot be reprinted.'
+          : 'No receipt data is available for this order.',
+        errorCondition,
+        adyenResponse: statusResponse
+      });
+    }
+
+    const outputText = [
+      { Text: 'DUPLICATE RECEIPT', CharacterStyle: 'Bold', Alignment: 'Centred', EndOfLineFlag: true },
+      { Text: '', EndOfLineFlag: true },
+      ...buildReceiptOutputText(items)
+    ];
+
+    const printPayload = {
+      SaleToPOIRequest: {
+        MessageHeader: {
+          ProtocolVersion: '3.0',
+          MessageClass: 'Device',
+          MessageCategory: 'Print',
+          MessageType: 'Request',
+          ServiceID: uuidv4().replace(/-/g, '').slice(0, 10),
           SaleID: process.env.ADYEN_SALE_ID || 'POSWebApp',
           POIID: poiId
+        },
+        PrintRequest: {
+          PrintOutput: {
+            DocumentQualifier: 'Document',
+            ResponseMode: 'PrintEnd',
+            OutputContent: {
+              OutputFormat: 'Text',
+              OutputText: outputText
+            }
+          }
         }
       }
-    }
-  };
+    };
 
-  try {
-    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
-    const response = data?.SaleToPOIResponse?.TransactionStatusResponse?.Response;
-    const result = response?.Result;
-    if (result === 'Success') {
+    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', printPayload);
+    const response = data?.SaleToPOIResponse?.PrintResponse?.Response;
+    if (response?.Result === 'Success') {
       return res.json({ success: true, adyenResponse: data });
     }
-    // The terminal only keeps recent transactions, so older orders commonly come
-    // back as NotFound. Say so instead of showing a bare error condition.
     const errorCondition = response?.ErrorCondition || '';
-    const error = errorCondition === 'NotFound'
-      ? 'The terminal no longer has this transaction stored, so it cannot reprint the receipt.'
-      : `Reprint failed${errorCondition ? ` (${errorCondition})` : ''}`;
-    res.status(400).json({ error, errorCondition, adyenResponse: data });
+    res.status(400).json({
+      error: `Print failed${errorCondition ? ` (${errorCondition})` : ''}`,
+      errorCondition,
+      adyenResponse: data
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
