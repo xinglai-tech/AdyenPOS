@@ -393,20 +393,20 @@ html, body {
 }
 .terminal-delete-btn:hover { color: var(--danger); background: rgba(255,59,48,.1); }
 .settings-buttons {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   align-items: stretch;
-  gap: clamp(6px, 1vw, 14px);
+  gap: clamp(6px, 0.8vw, 10px);
   margin-bottom: clamp(8px, 1.2vw, 18px);
 }
 .settings-btn {
   width: 100%;
-  white-space: nowrap;
   text-align: center;
   justify-content: center;
-  padding: clamp(4px, 0.6vw, 8px) clamp(8px, 1vw, 16px) !important;
-  font-size: clamp(.65rem, 1.2vw, .86rem) !important;
-  border-radius: 8px !important;
+  line-height: 1.25;
+  padding: clamp(7px, 0.9vw, 11px) clamp(6px, 0.8vw, 10px) !important;
+  font-size: clamp(.62rem, 1.1vw, .78rem) !important;
+  border-radius: 10px !important;
 }
 .settings-mode {
   margin-bottom: 0;
@@ -1168,29 +1168,37 @@ html, body {
 /* ============ Payment Method Modal ============ */
 .modal-paymethod { max-width: 400px; }
 .paymethod-grid {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: 10px;
-  margin: 16px 0;
+  margin: 18px 0;
 }
 .paymethod-btn {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 14px;
-  padding: 14px 18px;
+  justify-content: flex-start;
+  gap: 9px;
+  padding: 14px 6px;
   background: rgba(0,0,0,.04);
   border: 1px solid rgba(0,0,0,.1);
-  border-radius: 10px;
+  border-radius: 12px;
   color: #1d1d1f;
-  font-size: .95rem;
+  font-size: .75rem;
   font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
   cursor: pointer;
   transition: all .2s;
 }
-.paymethod-btn:hover { background: rgba(0,0,0,.08); border-color: var(--primary); }
+.paymethod-btn:hover {
+  background: rgba(0,0,0,.08);
+  border-color: var(--primary);
+  transform: translateY(-2px);
+}
 .paymethod-btn img {
-  width: 40px;
-  height: 28px;
+  width: 42px;
+  height: 30px;
   object-fit: contain;
   border-radius: 4px;
   background: #fff;

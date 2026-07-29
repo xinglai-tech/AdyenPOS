@@ -521,7 +521,10 @@ const RECEIPT_PRINT_WIDTH = parseInt(process.env.RECEIPT_PRINT_WIDTH || '32', 10
 // noise for the shopper. Dropped when we render our own printout.
 const RECEIPT_HIDDEN_KEYS = new Set([
   'panSeq', 'preferredName', 'cardType', 'paymentMethodVariant', 'posEntryMode',
-  'aid', 'mid', 'tid', 'ptid', 'authCode', 'txRef'
+  'aid', 'mid', 'tid', 'ptid', 'authCode', 'txRef',
+  // Our own title already says this is a copy, the PSP reference identifies the
+  // payment better than our internal UUID, and the type is always the same here.
+  'cardholderHeader', 'merchantTitle', 'mref', 'txtype'
 ]);
 
 // Pull the receipt data out of either a PaymentResponse or the PaymentResponse
