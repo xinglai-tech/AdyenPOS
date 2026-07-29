@@ -37,7 +37,9 @@ html, body {
 /* ============ App Layout ============ */
 #app {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  /* Fluid so the order cards get more room on wide screens; the rem bounds also
+     track the larger root font size used on big displays. */
+  grid-template-columns: clamp(16rem, 22vw, 26rem) 1fr;
   height: 100vh;
   overflow: hidden;
 }
@@ -1400,13 +1402,11 @@ html, body {
 /* Almost every size in this file is expressed in rem, so raising the root font
    size scales the whole interface proportionally. TVs are viewed from several
    metres away, so the UI has to grow with the screen instead of staying at
-   desktop pixel sizes. The fixed-px panel widths are restated in rem here so
-   they scale along with everything else. */
+   desktop pixel sizes. The order and settings panels already use rem-bounded
+   clamps, so they scale without being restated here. */
 @media (min-width: 1600px) {
   html { font-size: 18px; }
-  #app { grid-template-columns: 20rem 1fr; }
   #right-col { width: 23.75rem; }
-  #settings-section { width: clamp(13rem, 20vw, 20rem); }
   .product-grid { gap: 10px; }
   .overlay-content { max-width: 30rem; }
   .modal-sm { max-width: 26rem; }
