@@ -534,14 +534,20 @@ function extractPaymentReceipt(root, qualifier = 'CustomerReceipt') {
 // Adyen returns receipt lines as form-encoded key/name/value triplets, e.g.
 // "name=Date&value=29%2f07%2f2026&key=txdate". The printer needs plain text, so
 // render each line as a label on the left and its value right-aligned.
-function buildReceiptOutputText(items) {
+function buildReceiptOutputText(items, insertions = {}) {
   const lines = [];
+  const inserted = new Set();
   for (const item of items) {
     const raw = typeof item?.Text === 'string' ? item.Text : '';
     const params = new URLSearchParams(raw);
     const key = params.get('key') || '';
     const name = params.get('name');
     const value = params.get('value');
+
+    if (insertions[key] && !inserted.has(key)) {
+      lines.push(...insertions[key]);
+      inserted.add(key);
+    }
     const style = (item?.CharacterStyle === 'Bold' || item?.CharacterStyle === 'Underline')
       ? item.CharacterStyle
       : 'Normal';
@@ -561,6 +567,33 @@ function buildReceiptOutputText(items) {
     const text = gap > 0 ? label + ' '.repeat(gap) + value : `${label} ${value}`;
     lines.push({ Text: text, CharacterStyle: style, EndOfLineFlag: true });
   }
+  // The receipt layout is generated dynamically, so an anchor key may be absent.
+  // Append anything that never found its anchor rather than dropping it.
+  for (const [key, extra] of Object.entries(insertions)) {
+    if (!inserted.has(key)) lines.push(...extra);
+  }
+  return lines;
+}
+
+// Renders the purchased products as receipt lines. Adyen's receipt data only
+// describes the payment, never the basket, so line items can only come from our
+// own order record.
+function buildItemLines(order) {
+  const items = Array.isArray(order?.items) ? order.items : [];
+  if (items.length === 0) return [];
+  const currency = order.currency || '';
+  const lines = [{ Text: '', EndOfLineFlag: true }];
+  for (const item of items) {
+    const qty = item.qty || 1;
+    const label = `${item.name || 'Item'} x${qty}`;
+    const amount = `${currency} ${((item.price || 0) * qty).toFixed(2)}`.trim();
+    const gap = RECEIPT_PRINT_WIDTH - label.length - amount.length;
+    lines.push({
+      Text: gap > 0 ? label + ' '.repeat(gap) + amount : `${label} ${amount}`,
+      EndOfLineFlag: true
+    });
+  }
+  lines.push({ Text: '', EndOfLineFlag: true });
   return lines;
 }
 
@@ -622,7 +655,7 @@ app.post('/api/reprint-receipt', async (req, res) => {
     const outputText = [
       { Text: 'DUPLICATE RECEIPT', CharacterStyle: 'Bold', Alignment: 'Centred', EndOfLineFlag: true },
       { Text: '', EndOfLineFlag: true },
-      ...buildReceiptOutputText(items)
+      ...buildReceiptOutputText(items, { totalAmount: buildItemLines(order) })
     ];
 
     const printPayload = {
