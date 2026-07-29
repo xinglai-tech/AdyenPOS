@@ -531,6 +531,24 @@ function extractPaymentReceipt(root, qualifier = 'CustomerReceipt') {
   return Array.isArray(items) && items.length > 0 ? items : null;
 }
 
+// Adyen timestamps are UTC, but a receipt should show the time the shopper saw
+// on the terminal, so render it in the store's timezone.
+function formatReceiptTime(timestamp) {
+  if (!timestamp) return '—';
+  const d = new Date(timestamp);
+  if (isNaN(d.getTime())) return String(timestamp);
+  try {
+    return d.toLocaleString('en-GB', {
+      timeZone: process.env.RECEIPT_TIMEZONE || 'Asia/Singapore',
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false
+    }).replace(',', '');
+  } catch {
+    return d.toISOString();
+  }
+}
+
 // Adyen returns receipt lines as form-encoded key/name/value triplets, e.g.
 // "name=Date&value=29%2f07%2f2026&key=txdate". The printer needs plain text, so
 // render each line as a label on the left and its value right-aligned.
@@ -582,47 +600,21 @@ app.post('/api/reprint-receipt', async (req, res) => {
   if (!poiId) return res.status(400).json({ error: 'No terminal is selected' });
 
   try {
-    // Prefer the receipt data already stored with the order: it survives even
-    // after the terminal has dropped the transaction from its local history.
-    let items = extractPaymentReceipt(order.response);
-    let statusResponse = null;
-
-    if (!items) {
-      const statusHeader = makeHeader('TransactionStatus');
-      statusHeader.POIID = poiId;
-      statusResponse = await adyenRequest('https://terminal-api-test.adyen.com/sync', {
-        SaleToPOIRequest: {
-          MessageHeader: statusHeader,
-          TransactionStatusRequest: {
-            ReceiptReprintFlag: false,
-            DocumentQualifier: ['CustomerReceipt'],
-            MessageReference: {
-              MessageCategory: 'Payment',
-              ServiceID: serviceId,
-              SaleID: process.env.ADYEN_SALE_ID || 'POSWebApp',
-              POIID: poiId
-            }
-          }
-        }
-      });
-      items = extractPaymentReceipt(statusResponse);
-    }
-
-    if (!items) {
-      const errorCondition = statusResponse?.SaleToPOIResponse?.TransactionStatusResponse?.Response?.ErrorCondition || '';
-      return res.status(400).json({
-        error: errorCondition === 'NotFound'
-          ? 'The terminal no longer has this transaction stored, so its receipt cannot be reprinted.'
-          : 'No receipt data is available for this order.',
-        errorCondition,
-        adyenResponse: statusResponse
-      });
-    }
-
+    // TEMPORARY: print a cut-down receipt with only the PSP reference, amount
+    // and time. Built straight from the stored order, so it needs neither the
+    // Adyen receipt data nor a TransactionStatus round trip. To restore the full
+    // receipt, replace `outputText` with the extract + build helpers above.
     const outputText = [
       { Text: 'DUPLICATE RECEIPT', CharacterStyle: 'Bold', Alignment: 'Centred', EndOfLineFlag: true },
       { Text: '', EndOfLineFlag: true },
-      ...buildReceiptOutputText(items)
+      ...buildReceiptOutputText([
+        { Text: `name=PSP&value=${encodeURIComponent(order.pspReference || 'n/a')}&key=pspReference` },
+        {
+          CharacterStyle: 'Bold',
+          Text: `name=TOTAL&value=${encodeURIComponent(`${order.currency || ''} ${(order.amount || 0).toFixed(2)}`.trim())}&key=totalAmount`
+        },
+        { Text: `name=Time&value=${encodeURIComponent(formatReceiptTime(order.poiTimestamp || order.createdAt))}&key=txtime` }
+      ])
     ];
 
     const printPayload = {
