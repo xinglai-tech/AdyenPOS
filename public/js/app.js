@@ -578,8 +578,11 @@ function renderOrders() {
             <button class="btn-check-order" onclick="queryOrderStatus('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Check Status</button>
             <button class="btn-cancel-order" onclick="cancelOrder('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Cancel</button>
           </div>` : ''}
-        ${canReprint ? `<button class="btn-reprint" onclick="reprintReceipt('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Print Receipt</button>` : ''}
-        ${canRefund ? `<button class="btn-refund" onclick="promptRefund('${o.id}')" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Refund</button>` : ''}
+        ${canRefund || canReprint ? `
+          <div class="order-card-actions">
+            ${canRefund ? `<button class="btn-refund" onclick="promptRefund('${o.id}')" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Refund</button>` : ''}
+            ${canReprint ? `<button class="btn-reprint" onclick="reprintReceipt('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}>Print Receipt</button>` : ''}
+          </div>` : ''}
       </div>
     `;
   }).join('');
