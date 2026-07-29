@@ -1202,10 +1202,10 @@ html, body {
 .paymethod-grid {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 18px;
   /* Narrow, centred column: full-width rows looked stretched in the modal. */
   width: 62%;
-  margin: 20px auto;
+  margin: 22px auto;
 }
 .paymethod-btn {
   display: flex;
@@ -1215,7 +1215,7 @@ html, body {
   justify-content: flex-start;
   white-space: nowrap;
   gap: 10px;
-  padding: 7px 12px;
+  padding: 13px 12px;
   background: rgba(0,0,0,.04);
   border: 1px solid rgba(0,0,0,.1);
   border-radius: 10px;
