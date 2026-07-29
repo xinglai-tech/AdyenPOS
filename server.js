@@ -668,7 +668,9 @@ app.post('/api/reprint-receipt', async (req, res) => {
 // --------------- API: Clear Orders ---------------
 app.delete('/api/orders', (req, res) => {
   orders.length = 0;
-  broadcastSSE('init', orders);
+  // A dedicated event, not `init`: clients treat `init` as a reconnect snapshot
+  // and merge it, so an empty `init` would no longer clear their list.
+  broadcastSSE('ordersCleared', {});
   res.json({ status: 'cleared' });
 });
 

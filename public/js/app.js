@@ -193,28 +193,65 @@ async function loadConfig() {
   } catch { /* ignore */ }
 }
 
+// Replaces the local order list with the server's, but keeps any order the
+// server does not know about. The server stores orders in memory, so a recycled
+// process or a second instance can answer with a shorter list than this page
+// already has, and overwriting would silently erase the order history.
+// Returns how many local-only orders were kept.
+function mergeOrdersFromServer(serverOrders) {
+  const fromServer = Array.isArray(serverOrders) ? serverOrders : [];
+  const serverIds = new Set(fromServer.map(o => o.id));
+  const localOnly = state.orders.filter(o => !serverIds.has(o.id));
+  state.orders = localOnly.length === 0
+    ? fromServer
+    : [...fromServer, ...localOnly].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return localOnly.length;
+}
+
 // ====================== SSE ======================
 function setupSSE() {
   const es = new EventSource('/api/events');
   let _sawInit = false;
 
   es.addEventListener('init', async (e) => {
-    state.orders = JSON.parse(e.data);
+    const serverOrders = JSON.parse(e.data);
+
+    if (!_sawInit) {
+      state.orders = serverOrders;
+      renderOrders();
+      _sseReady = true;
+      tryRecoverPending();
+      _sawInit = true;
+      return;
+    }
+
+    // A second `init` means EventSource reconnected. That happens on a network
+    // blip or when the host recycles the process, not only on a real restart, so
+    // the server's list can legitimately be behind what this page already knows.
+    // Keep locally known orders instead of letting an empty list wipe the UI.
+    const kept = mergeOrdersFromServer(serverOrders);
     renderOrders();
     _sseReady = true;
     tryRecoverPending();
 
-    // A second `init` means EventSource reconnected, which usually means the
-    // server restarted and lost its in-memory terminal list. Re-sync the config
-    // so this page stops showing a terminal the server no longer considers
-    // active. No user interaction required.
-    if (_sawInit) {
-      await loadConfig();
-      renderTerminals();
-      showToast('Reconnected to server — terminal list refreshed', 'info');
-      if (state.config.poiId) checkTerminal({ silent: true });
+    // Re-sync the config too: if the server did lose its terminals, the page
+    // should stop offering a terminal the server no longer considers active.
+    const previousTerminals = (state.config.terminals || []).map(t => t.poiId).join(',');
+    await loadConfig();
+    const currentTerminals = (state.config.terminals || []).map(t => t.poiId).join(',');
+    renderTerminals();
+
+    if (previousTerminals !== currentTerminals) {
+      showToast('Reconnected — terminal list changed on the server', 'warning');
+    } else if (kept > 0) {
+      showToast(`Reconnected — kept ${kept} order(s) the server no longer has`, 'warning');
     }
-    _sawInit = true;
+    if (state.config.poiId) checkTerminal({ silent: true });
+  });
+
+  es.addEventListener('ordersCleared', () => {
+    state.orders = [];
+    renderOrders();
   });
 
   es.addEventListener('orderUpdate', (e) => {
