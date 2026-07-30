@@ -834,11 +834,6 @@ html, body {
   background: #fafafa;
   border-bottom: 1px solid var(--border);
 }
-/* A coloured left edge, so a long log can be scanned for direction without
-   reading any of the titles. */
-.log-entry-request  { border-left: 3px solid var(--primary); }
-.log-entry-response { border-left: 3px solid var(--success); }
-
 .log-entry-title {
   display: flex;
   align-items: center;
