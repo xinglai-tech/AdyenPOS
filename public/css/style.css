@@ -448,7 +448,7 @@ html, body {
   margin-bottom: 0;
 }
 .receipt-hint {
-  font-size: .62rem;
+  font-size: .56rem;
   color: var(--text-light);
   line-height: 1.5;
   margin: 0 0 8px;
