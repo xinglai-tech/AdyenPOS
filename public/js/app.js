@@ -778,34 +778,34 @@ function renderTerminals() {
       </button>`;
   }).join('');
 
+  // The card is the trigger: a separate closed-state box on top of it would repeat
+  // the same terminal twice. The remove button is a sibling rather than nested,
+  // since a button cannot contain another button.
   $terminalList.innerHTML = `
     <div class="terminal-picker" id="terminal-picker">
-      <button type="button" class="terminal-picker-btn" aria-haspopup="listbox">
-        <span class="terminal-picker-value">${info.title}</span>
+      <button type="button" class="terminal-card" aria-haspopup="listbox">
+        <span class="terminal-thumb">
+          ${info.photo
+            ? `<img src="${info.photo}" alt="${info.label}" loading="lazy">`
+            : `<svg viewBox="0 0 40 56" fill="none" stroke="currentColor" stroke-width="1.6"
+                    stroke-linecap="round" stroke-linejoin="round">${TERMINAL_ART[info.family]}</svg>`}
+        </span>
+        <span class="terminal-meta">
+          <span class="terminal-model-row">
+            <span class="terminal-model">${info.label}</span>
+            ${checked ? `<span class="terminal-status-dot ${online ? 'online' : 'offline'}">${online ? 'Online' : 'Offline'}</span>` : ''}
+          </span>
+          ${info.serial ? `<span class="terminal-serial">${info.serial}</span>` : ''}
+        </span>
         <svg class="terminal-picker-chevron" viewBox="0 0 12 8" fill="none" stroke="currentColor"
              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1.5 6 6.5l5-5"/></svg>
       </button>
-      <div class="terminal-picker-menu" role="listbox">${options}</div>
-    </div>
-    <div class="terminal-card">
-      <div class="terminal-thumb">
-        ${info.photo
-          ? `<img src="${info.photo}" alt="${info.label}" loading="lazy">`
-          : `<svg viewBox="0 0 40 56" fill="none" stroke="currentColor" stroke-width="1.6"
-                  stroke-linecap="round" stroke-linejoin="round">${TERMINAL_ART[info.family]}</svg>`}
-      </div>
-      <div class="terminal-meta">
-        <div class="terminal-model-row">
-          <span class="terminal-model">${info.label}</span>
-          ${checked ? `<span class="terminal-status-dot ${online ? 'online' : 'offline'}">${online ? 'Online' : 'Offline'}</span>` : ''}
-        </div>
-        ${info.serial ? `<div class="terminal-serial">${info.serial}</div>` : ''}
-      </div>
       <button class="terminal-delete-btn" onclick="deleteTerminal('${active.poiId}')" title="Remove this terminal">✕</button>
+      <div class="terminal-picker-menu" role="listbox">${options}</div>
     </div>`;
 
   const picker = document.getElementById('terminal-picker');
-  picker.querySelector('.terminal-picker-btn')
+  picker.querySelector('.terminal-card')
     .addEventListener('click', () => picker.classList.toggle('open'));
   picker.querySelectorAll('.terminal-option').forEach(btn => {
     btn.addEventListener('click', () => {
