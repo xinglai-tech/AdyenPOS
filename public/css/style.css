@@ -416,7 +416,9 @@ html, body {
   grid-template-columns: 1fr 1fr;
   align-items: stretch;
   gap: clamp(6px, 0.8vw, 10px);
-  margin-bottom: clamp(8px, 1.2vw, 18px);
+  /* Generous floor: the Tap to Pay button sits directly above the Sync/Async
+     toggle, and 8px was close enough that touch taps landed on the button. */
+  margin-bottom: clamp(16px, 1.4vw, 20px);
 }
 .settings-btn {
   width: 100%;
@@ -543,6 +545,16 @@ html, body {
   cursor: pointer;
   transition: background .3s ease;
   flex-shrink: 0;
+  touch-action: manipulation;
+}
+/* The track is only 20px tall, far under the ~44px touch target guideline. Grow the
+   hit area with an invisible overlay instead of the track itself, so the control
+   stays visually small. Kept under the gap above so it cannot steal button taps. */
+.toggle-slider-label::before {
+  content: '';
+  position: absolute;
+  inset: -10px -14px;
+  border-radius: 20px;
 }
 .toggle-slider-label::after {
   content: '';
