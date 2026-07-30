@@ -997,7 +997,9 @@ html, body {
 .cart-total { margin-bottom: 10px; display: flex; align-items: baseline; justify-content: space-between; }
 .total-label { font-size: .95rem; font-weight: 600; color: var(--text-light); }
 .total-amount { font-size: 1.25rem; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
-.cart-actions { display: flex; gap: 150px; width: 50%; margin: 0 auto; }
+/* A 150px gap inside a 50%-wide row left the two buttons a few dozen pixels each
+   once the API log narrowed this column. Cap the row instead and keep the gap small. */
+.cart-actions { display: flex; gap: 12px; width: min(100%, 30rem); margin: 0 auto; }
 
 /* ============ Buttons ============ */
 /* Lucide swaps each `data-lucide` element for an inline SVG that inherits colour
