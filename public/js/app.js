@@ -1281,7 +1281,7 @@ async function saveMembers() {
     renderUserData();
     // The rows look identical after a save, so confirm it with a popup: the
     // notification bar behind the modal would not be seen.
-    showFloatingToast(`${_members.length} member${_members.length === 1 ? '' : 's'} saved`, 'success');
+    showFloatingToast('Successfully saved', 'success');
   } catch (err) {
     showFloatingToast(`Could not save the members: ${err.message}`, 'error', 4000);
   } finally {

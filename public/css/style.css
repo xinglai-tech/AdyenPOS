@@ -1293,11 +1293,13 @@ html, body {
    happened inside a modal, where the inline notification bar is not visible. */
 #toast-container {
   position: fixed;
-  bottom: 24px;
-  left: 24px;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 1500;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 8px;
   pointer-events: none;
 }
@@ -1316,12 +1318,12 @@ html, body {
 .toast-warning { background: #ff9500; color: #1d1d1f; }
 .toast-leaving { animation: toast-out .18s ease-in forwards; }
 @keyframes toast-in {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(-8px); }
   to   { opacity: 1; transform: none; }
 }
 @keyframes toast-out {
   from { opacity: 1; transform: none; }
-  to   { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 0; transform: translateY(-8px); }
 }
 @media (prefers-reduced-motion: reduce) {
   .toast, .toast-leaving { animation-duration: .01ms; }
@@ -1533,7 +1535,6 @@ html, body {
 @media (max-width: 900px) {
   #app { grid-template-columns: 1fr; }
   #order-panel { display: none; }
-  #toast-container { left: 20px; }
   .product-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
@@ -1629,7 +1630,9 @@ html, body {
   .modal-userdata { padding: 22px 18px; }
   /* Narrower label column so the value still has room on a phone. */
   .userdata-field { grid-template-columns: 3.6rem 1fr; }
-  #toast-container { left: 12px; right: 12px; }
+  /* Centring by translate leaves no room to shrink on a narrow screen, so pin it
+     to both edges instead. */
+  #toast-container { left: 12px; right: 12px; transform: none; }
 }
 
 /* ============ Responsive: short viewport (small height / landscape) ============ */
