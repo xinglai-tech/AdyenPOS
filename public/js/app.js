@@ -1,5 +1,7 @@
 // How many entries the API log keeps before the oldest are dropped.
 const LOG_MAX_ENTRIES = 60;
+// Above this many OutputText lines, the log summarises them instead of listing them.
+const LOG_MAX_OUTPUT_LINES = 6;
 
 // ====================== State ======================
 const state = {
@@ -1900,15 +1902,27 @@ async function copyToClipboard(text) {
   }
 }
 
-// PaymentReceipt carries the whole formatted receipt as dozens of line objects,
-// which pushes everything worth reading out of view. The log shows a summary of it
-// instead. Only the log is affected: printing and reprinting use the response as it
-// came back from Adyen, which is stored on the order untouched.
+// Receipt content dwarfs everything else in a payload: dozens of line objects in a
+// response, and a base64 logo in a print request. The log summarises it so the
+// result, amounts and AdditionalResponse stay in view. Only the log is affected —
+// the response stored on the order is untouched, so printing still works from it.
 function summariseReceipts(key, value) {
-  if (key !== 'PaymentReceipt' || !Array.isArray(value)) return value;
-  const lines = value.reduce((n, r) => n + (r?.OutputContent?.OutputText?.length || 0), 0);
-  const kinds = value.map(r => r?.DocumentQualifier).filter(Boolean).join(', ');
-  return `[omitted from the log: ${kinds || `${value.length} receipts`} — ${lines} lines]`;
+  if (key === 'PaymentReceipt' && Array.isArray(value)) {
+    const lines = value.reduce((n, r) => n + (r?.OutputContent?.OutputText?.length || 0), 0);
+    const kinds = value.map(r => r?.DocumentQualifier).filter(Boolean).join(', ');
+    return `[omitted from the log: ${kinds || `${value.length} receipts`} — ${lines} lines]`;
+  }
+  // A print request carries the rendered receipt as OutputText. Short ones are kept:
+  // the loyalty confirmation prompt is four entries and is worth reading.
+  if (key === 'OutputText' && Array.isArray(value) && value.length > LOG_MAX_OUTPUT_LINES) {
+    return `[omitted from the log: ${value.length} lines]`;
+  }
+  // The receipt logo travels as base64-encoded XHTML, which is unreadable and can
+  // run to hundreds of kilobytes.
+  if (key === 'OutputXHTML' && typeof value === 'string' && value.length > 200) {
+    return `[omitted from the log: ${value.length} chars of base64 XHTML]`;
+  }
+  return value;
 }
 
 function showApiResponse(label, data, direction = 'response') {
