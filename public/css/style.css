@@ -459,12 +459,12 @@ html, body {
   position: relative;
   display: flex;
   align-items: stretch;
-  min-height: 96px;
+  /* Fixed rather than a minimum so the image panel below can take a percentage of
+     it. Two lines of text and a badge sit well inside this. */
+  height: 96px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: #fff;
-  /* No padding of its own: the image panel runs to the card border, and the corners
-     are clipped so it follows the same radius. */
   overflow: hidden;
 }
 /* A faint tint behind the device, which the product shots can sit on because they
@@ -472,12 +472,15 @@ html, body {
 .terminal-thumb {
   flex-shrink: 0;
   width: 80px;
+  height: 60%;
+  align-self: center;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 8px;
+  padding: 6px;
   background: #f7f7f8;
   border-right: 1px solid var(--border);
+  border-radius: 0 8px 8px 0;
   color: var(--text-light);
 }
 /* contain, so a wide countertop unit and a tall handheld both fill as much of the
