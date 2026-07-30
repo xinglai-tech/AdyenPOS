@@ -517,6 +517,10 @@ app.post('/api/transaction-status', async (req, res) => {
 // right-align values against their labels.
 const RECEIPT_PRINT_WIDTH = parseInt(process.env.RECEIPT_PRINT_WIDTH || '32', 10);
 
+// Store name printed as the receipt title. Adyen's own merchant header slots are
+// account configuration, so the reprint renders this instead.
+const RECEIPT_STORE_NAME = process.env.RECEIPT_STORE_NAME || 'My Super Store';
+
 // Technical card and acquirer details that Adyen puts on the receipt but that are
 // noise for the shopper. Dropped when we render our own printout.
 const RECEIPT_HIDDEN_KEYS = new Set([
@@ -524,7 +528,9 @@ const RECEIPT_HIDDEN_KEYS = new Set([
   'aid', 'mid', 'tid', 'ptid', 'authCode', 'txRef',
   // Our own title already says this is a copy, the PSP reference identifies the
   // payment better than our internal UUID, and the type is always the same here.
-  'cardholderHeader', 'merchantTitle', 'mref', 'txtype'
+  'cardholderHeader', 'merchantTitle', 'mref', 'txtype',
+  // Adyen's "Retain for your records" footer; not wanted on our printout.
+  'retain'
 ]);
 
 // Pull the receipt data out of either a PaymentResponse or the PaymentResponse
@@ -689,6 +695,7 @@ app.post('/api/reprint-receipt', async (req, res) => {
 
     const outputText = collapseBlankLines([
       { Text: 'DUPLICATE RECEIPT', CharacterStyle: 'Bold', Alignment: 'Centred', EndOfLineFlag: true },
+      { Text: RECEIPT_STORE_NAME, CharacterStyle: 'Bold', Alignment: 'Centred', EndOfLineFlag: true },
       { Text: '', EndOfLineFlag: true },
       ...buildReceiptOutputText(items, {
         mref: buildPspLines(order),
