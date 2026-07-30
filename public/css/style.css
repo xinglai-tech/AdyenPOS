@@ -439,7 +439,23 @@ html, body {
   font-size: clamp(.58rem, 1vw, .74rem) !important;
   border-radius: 10px !important;
 }
-/* Receipt logo */
+/* Receipt modal */
+.receipt-section {
+  text-align: left;
+  margin-bottom: 18px;
+}
+.receipt-section:last-of-type {
+  margin-bottom: 0;
+}
+.receipt-hint {
+  font-size: .72rem;
+  color: var(--text-light);
+  line-height: 1.5;
+  margin: 0 0 8px;
+}
+.receipt-section .ttp-input {
+  margin-bottom: 6px;
+}
 .logo-preview {
   display: flex;
   align-items: center;

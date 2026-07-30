@@ -58,17 +58,7 @@
                   <button id="btn-add-terminal" class="btn btn-outline settings-btn"><i data-lucide="plus-circle"></i>Add terminal</button>
                   <button id="btn-ttp-open" class="btn btn-outline settings-btn"><i data-lucide="smartphone-nfc"></i>Tap to Pay</button>
                   <button id="btn-toggle-log" class="btn btn-outline settings-btn"><i data-lucide="terminal"></i>API log</button>
-                </div>
-                <!-- Receipt logo printed at the top of the receipt -->
-                <div class="settings-group">
-                  <div class="settings-label">Receipt logo</div>
-                  <div class="logo-preview"><img id="logo-preview-img" alt="Receipt logo" /></div>
-                  <div id="logo-meta" class="logo-meta"></div>
-                  <input type="file" id="input-logo-file" accept="image/*" class="hidden" />
-                  <div class="logo-buttons">
-                    <button id="btn-logo-upload" class="btn btn-outline settings-btn"><i data-lucide="image-up"></i>Upload</button>
-                    <button id="btn-logo-reset" class="btn btn-outline settings-btn"><i data-lucide="undo-2"></i>Reset</button>
-                  </div>
+                  <button id="btn-receipt-open" class="btn btn-outline settings-btn"><i data-lucide="receipt-text"></i>Receipt</button>
                 </div>
                 <!-- Payment Mode -->
                 <div class="settings-group settings-mode">
@@ -196,6 +186,45 @@
       <div id="ttp-hint" class="ttp-hint">Open this page on an Android device with the Adyen Payments Test app installed, then board.</div>
       <div class="overlay-actions">
         <button id="btn-ttp-close" class="btn btn-outline btn-action">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== Receipt Modal ==================== -->
+  <div id="receipt-modal" class="overlay hidden">
+    <div class="overlay-content modal-sm">
+      <h3 class="overlay-title">Receipt</h3>
+
+      <div class="receipt-section">
+        <div class="settings-label">Logo</div>
+        <div class="logo-preview"><img id="logo-preview-img" alt="Receipt logo" /></div>
+        <div id="logo-meta" class="logo-meta"></div>
+        <p class="receipt-hint">
+          Any image file works: it is scaled down and converted to pure black and white
+          in your browser before upload, because the print head can only burn or not burn
+          each dot. Grey tones and colours are lost, so line art and solid shapes print best.
+        </p>
+        <p class="receipt-hint">Stored as PNG, at most <strong>384 x 600 px</strong> and <strong>176 KB</strong>. 384 px is the full paper width.</p>
+        <input type="file" id="input-logo-file" accept="image/*" class="hidden" />
+        <div class="logo-buttons">
+          <button id="btn-logo-upload" class="btn btn-outline settings-btn"><i data-lucide="image-up"></i>Upload</button>
+          <button id="btn-logo-reset" class="btn btn-outline settings-btn"><i data-lucide="undo-2"></i>Reset</button>
+        </div>
+      </div>
+
+      <div class="receipt-section">
+        <div class="settings-label">QR code</div>
+        <p class="receipt-hint">Printed at the bottom of the receipt. A URL or any text, up to 512 characters; shorter content prints as a coarser, easier to scan code.</p>
+        <input type="text" id="input-qr-url" class="ttp-input" placeholder="https://adyen.com.cn" autocomplete="off" />
+        <div id="qr-meta" class="logo-meta"></div>
+        <div class="logo-buttons">
+          <button id="btn-qr-save" class="btn btn-outline settings-btn"><i data-lucide="save"></i>Save</button>
+          <button id="btn-qr-reset" class="btn btn-outline settings-btn"><i data-lucide="undo-2"></i>Reset</button>
+        </div>
+      </div>
+
+      <div class="overlay-actions">
+        <button id="btn-receipt-close" class="btn btn-outline btn-action">Close</button>
       </div>
     </div>
   </div>

@@ -148,6 +148,13 @@ const $logoMeta        = document.getElementById('logo-meta');
 const $inputLogoFile   = document.getElementById('input-logo-file');
 const $btnLogoUpload   = document.getElementById('btn-logo-upload');
 const $btnLogoReset    = document.getElementById('btn-logo-reset');
+const $receiptModal    = document.getElementById('receipt-modal');
+const $btnReceiptOpen  = document.getElementById('btn-receipt-open');
+const $btnReceiptClose = document.getElementById('btn-receipt-close');
+const $inputQrUrl      = document.getElementById('input-qr-url');
+const $qrMeta          = document.getElementById('qr-meta');
+const $btnQrSave       = document.getElementById('btn-qr-save');
+const $btnQrReset      = document.getElementById('btn-qr-reset');
 
 // Terminal display
 const $terminalDisplay = document.getElementById('terminal-display-content');
@@ -186,7 +193,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('terminal-display').style.display = state.isAsync ? '' : 'none';
   setupSSE();
   bindEvents();
-  loadReceiptLogo();
   refreshIcons();
   initTapToPay();
   await handleTtpReturn();
@@ -700,7 +706,7 @@ async function deleteTerminal(poiId) {
   }
 }
 
-// ====================== Receipt Logo ======================
+// ====================== Receipt Settings ======================
 // The print head is 384 dots wide and can only burn or not burn each dot, so a
 // picked file is downscaled and reduced to pure black and white in the browser
 // before it is uploaded. That keeps it well inside the size the terminal accepts
@@ -759,13 +765,78 @@ function renderLogoPreview(data) {
   $logoMeta.textContent = `${data.width}x${data.height} px · ${(data.bytes / 1024).toFixed(1)} KB · ${data.custom ? 'uploaded' : 'default'}`;
 }
 
-async function loadReceiptLogo() {
+function renderQrSettings(data) {
+  $inputQrUrl.value = data.qrUrl || '';
+  $qrMeta.textContent = data.qrUrl === data.qrUrlDefault
+    ? 'Default content'
+    : `Custom content · default is ${data.qrUrlDefault}`;
+}
+
+async function loadReceiptSettings() {
   try {
-    const res = await fetch('/api/receipt-logo');
-    renderLogoPreview(await res.json());
+    const res = await fetch('/api/receipt-settings');
+    if (!res.ok) throw new Error(`Server answered ${res.status}`);
+    const data = await res.json();
+    renderLogoPreview(data.logo);
+    renderQrSettings(data);
   } catch (err) {
-    $logoMeta.textContent = `Could not load the logo: ${err.message}`;
+    $logoMeta.textContent = `Could not load the receipt settings: ${err.message}`;
   }
+}
+
+async function saveQrUrl() {
+  const qrUrl = $inputQrUrl.value.trim();
+  if (!qrUrl) {
+    showToast('Enter the content for the QR code', 'error');
+    return;
+  }
+  $btnQrSave.disabled = true;
+  try {
+    const res = await fetch('/api/receipt-qr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ qrUrl })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || 'Could not save the QR content', 'error');
+      return;
+    }
+    await loadReceiptSettings();
+    showToast('QR code content saved', 'success');
+  } catch (err) {
+    showToast(`Could not save the QR content: ${err.message}`, 'error');
+  } finally {
+    $btnQrSave.disabled = false;
+  }
+}
+
+async function resetQrUrl() {
+  $btnQrReset.disabled = true;
+  try {
+    const res = await fetch('/api/receipt-qr', { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || 'Could not reset the QR content', 'error');
+      return;
+    }
+    await loadReceiptSettings();
+    showToast('Back to the default QR content', 'info');
+  } catch (err) {
+    showToast(`Could not reset the QR content: ${err.message}`, 'error');
+  } finally {
+    $btnQrReset.disabled = false;
+  }
+}
+
+function openReceiptModal() {
+  $receiptModal.classList.remove('hidden');
+  loadReceiptSettings();
+  refreshIcons();
+}
+
+function closeReceiptModal() {
+  $receiptModal.classList.add('hidden');
 }
 
 async function uploadReceiptLogo(file) {
@@ -789,6 +860,7 @@ async function uploadReceiptLogo(file) {
     }
     renderLogoPreview(data);
     showToast(`Logo updated (${width}x${height} px)`, 'success');
+    refreshIcons();
   } catch (err) {
     showToast(`Upload failed: ${err.message}`, 'error');
   } finally {
@@ -1473,8 +1545,13 @@ function bindEvents() {
     btn.addEventListener('click', () => processPayment(btn.dataset.brand || ''));
   });
   document.getElementById('btn-clear-display').addEventListener('click', clearTerminalDisplay);
+  $btnReceiptOpen.addEventListener('click', openReceiptModal);
+  $btnReceiptClose.addEventListener('click', closeReceiptModal);
   $btnLogoUpload.addEventListener('click', () => $inputLogoFile.click());
   $btnLogoReset.addEventListener('click', resetReceiptLogo);
+  $btnQrSave.addEventListener('click', saveQrUrl);
+  $btnQrReset.addEventListener('click', resetQrUrl);
+  $inputQrUrl.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveQrUrl(); });
   $inputLogoFile.addEventListener('change', async (e) => {
     await uploadReceiptLogo(e.target.files[0]);
     // Clear the value so picking the same file again still fires a change event.

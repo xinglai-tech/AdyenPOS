@@ -527,8 +527,23 @@ app.post('/api/transaction-status', async (req, res) => {
 // Characters per line on the printer, used to right-align values against labels.
 const RECEIPT_PRINT_WIDTH = parseInt(process.env.RECEIPT_PRINT_WIDTH || '32', 10);
 
-// Scanned by the shopper, printed at the very bottom of the receipt.
-const RECEIPT_QR_URL = process.env.RECEIPT_QR_URL || 'https://adyen.com.cn';
+// Scanned by the shopper, printed at the very bottom of the receipt. Editable at
+// runtime, so the current value is kept next to the logo on disk.
+const RECEIPT_QR_URL_DEFAULT = process.env.RECEIPT_QR_URL || 'https://adyen.com.cn';
+const RECEIPT_QR_MAX_LENGTH = 512;
+const RECEIPT_SETTINGS_FILE = path.join(__dirname, 'assets', 'receipt-settings.json');
+
+let receiptQrUrl = RECEIPT_QR_URL_DEFAULT;
+try {
+  const stored = JSON.parse(fs.readFileSync(RECEIPT_SETTINGS_FILE, 'utf8'));
+  if (typeof stored.qrUrl === 'string' && stored.qrUrl.trim()) receiptQrUrl = stored.qrUrl.trim();
+} catch {
+  // No stored settings yet: keep the default.
+}
+
+function saveReceiptSettings() {
+  fs.writeFileSync(RECEIPT_SETTINGS_FILE, JSON.stringify({ qrUrl: receiptQrUrl }, null, 2));
+}
 
 // A PNG uploaded through the app wins over the bundled Adyen logo. It lives next
 // to it on disk, so on Azure it survives restarts but not a redeploy.
@@ -738,7 +753,7 @@ async function sendPrintContent(poiId, outputContent, documentQualifier = 'Docum
   });
 }
 
-// --------------- API: Receipt Logo ---------------
+// --------------- API: Receipt Settings ---------------
 function describeLogo(logo) {
   if (!logo) return { present: false, custom: false };
   return {
@@ -751,15 +766,47 @@ function describeLogo(logo) {
   };
 }
 
-app.get('/api/receipt-logo', (_req, res) => {
+app.get('/api/receipt-settings', (_req, res) => {
   res.json({
-    ...describeLogo(loadReceiptLogo()),
+    logo: describeLogo(loadReceiptLogo()),
+    qrUrl: receiptQrUrl,
+    qrUrlDefault: RECEIPT_QR_URL_DEFAULT,
     limits: {
       maxWidth: RECEIPT_LOGO_MAX_WIDTH,
       maxHeight: RECEIPT_LOGO_MAX_HEIGHT,
-      maxBytes: RECEIPT_LOGO_MAX_BYTES
+      maxBytes: RECEIPT_LOGO_MAX_BYTES,
+      maxQrLength: RECEIPT_QR_MAX_LENGTH
     }
   });
+});
+
+// Any text can be encoded in a QR code, so the only limit is how much the code
+// can hold before it gets too dense for the printer to render legibly.
+app.post('/api/receipt-qr', (req, res) => {
+  const qrUrl = typeof req.body.qrUrl === 'string' ? req.body.qrUrl.trim() : '';
+  if (!qrUrl) return res.status(400).json({ error: 'The QR code content cannot be empty' });
+  if (qrUrl.length > RECEIPT_QR_MAX_LENGTH) {
+    return res.status(400).json({
+      error: `The content is ${qrUrl.length} characters, over the ${RECEIPT_QR_MAX_LENGTH} that print legibly`
+    });
+  }
+  try {
+    receiptQrUrl = qrUrl;
+    saveReceiptSettings();
+    res.json({ qrUrl: receiptQrUrl });
+  } catch (err) {
+    res.status(500).json({ error: `Could not store the QR content: ${err.message}` });
+  }
+});
+
+app.delete('/api/receipt-qr', (_req, res) => {
+  try {
+    receiptQrUrl = RECEIPT_QR_URL_DEFAULT;
+    saveReceiptSettings();
+    res.json({ qrUrl: receiptQrUrl });
+  } catch (err) {
+    res.status(500).json({ error: `Could not reset the QR content: ${err.message}` });
+  }
 });
 
 // Takes a PNG data URL. The browser already downscales and thresholds the picked
@@ -890,7 +937,7 @@ app.post('/api/reprint-receipt', async (req, res) => {
     });
     await runStep('qrCode', {
       OutputFormat: 'BarCode',
-      OutputBarcode: { BarcodeType: 'QRCode', BarcodeValue: RECEIPT_QR_URL }
+      OutputBarcode: { BarcodeType: 'QRCode', BarcodeValue: receiptQrUrl }
     }, 'CustomerReceipt');
 
     if (detailsOk) {
@@ -1637,6 +1684,12 @@ app.post('/api/display', (req, res) => {
 });
 
 // --------------- SPA fallback ---------------
+// API paths must not fall through to it: answering a missing endpoint with
+// index.html makes the caller fail on "Unexpected token '<'" instead of on a 404.
+app.all('/api/*', (req, res) => {
+  res.status(404).json({ error: `No such endpoint: ${req.method} ${req.path}` });
+});
+
 app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
