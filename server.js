@@ -5,7 +5,6 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
-const QRCode = require('qrcode');
 const nexoCrypto = require('./nexoCrypto');
 
 const app = express();
@@ -515,13 +514,23 @@ app.post('/api/transaction-status', async (req, res) => {
 });
 
 // --------------- Receipt printing helpers ---------------
-// The receipt is printed as one XHTML document rather than as Text output: only
-// XHTML can carry the logo image, the QR code and more than one font size. The
-// print head is 384 px wide, which is what every width below is measured against.
-const RECEIPT_PRINT_WIDTH_PX = 384;
+// The receipt goes out as three print requests, because a request carries a
+// single OutputFormat and, as test prints on the S1F2L showed, its XHTML renderer
+// only draws a document whose root element is a bare <img/>. A wrapping element,
+// text and tables all print nothing while still answering Success. So:
+//   1. XHTML  - the header image (store name and logo)
+//   2. Text   - the payment details
+//   3. BarCode - the QR code
 
-// Store name printed as the receipt title. Adyen's own merchant header slots are
-// account configuration, so the reprint renders this instead.
+// Characters per line on the printer, used to right-align values against labels.
+const RECEIPT_PRINT_WIDTH = parseInt(process.env.RECEIPT_PRINT_WIDTH || '32', 10);
+
+// Printed width of the header image, in pixels of the 384 px wide print head.
+const RECEIPT_LOGO_PRINT_WIDTH = 360;
+
+// Text output has no font size control, so the large store name is baked into the
+// header image. This name is only printed as text when that image is missing;
+// after changing it, rerun assets/make-receipt-logo.py.
 const RECEIPT_STORE_NAME = process.env.RECEIPT_STORE_NAME || 'My Super Store';
 
 // Scanned by the shopper, printed at the very bottom of the receipt.
@@ -648,46 +657,29 @@ function buildItemLines(order) {
   return lines;
 }
 
-function escapeXml(value) {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+// Turns the line objects into Text output, padding each label out with spaces so
+// its value lands against the right edge of the paper.
+function renderReceiptText(lines) {
+  return lines.map(line => {
+    if (line.type === 'blank') return { Text: '', EndOfLineFlag: true };
+    const style = line.bold ? 'Bold' : 'Normal';
+    if (line.type === 'centred') {
+      return { Text: line.text, CharacterStyle: style, Alignment: 'Centred', EndOfLineFlag: true };
+    }
+    const gap = RECEIPT_PRINT_WIDTH - line.label.length - line.value.length;
+    return {
+      Text: gap > 0 ? line.label + ' '.repeat(gap) + line.value : `${line.label} ${line.value}`,
+      CharacterStyle: style,
+      EndOfLineFlag: true
+    };
+  });
 }
 
-// Renders the receipt as an XHTML fragment: store name, logo, the payment lines
-// in a two-column table so amounts align without padding them with spaces, and
-// the QR code at the bottom. Both images are inline base64 PNGs; note the space
-// after "base64," that Adyen requires.
-function renderReceiptXhtml(lines, { logoBase64, qrBase64 } = {}) {
-  const rows = lines.map(line => {
-    if (line.type === 'blank') return '<tr><td colspan="2">&#160;</td></tr>';
-    if (line.type === 'centred') {
-      const text = escapeXml(line.text);
-      return `<tr><td colspan="2" align="center">${line.bold ? `<b>${text}</b>` : text}</td></tr>`;
-    }
-    const label = escapeXml(line.label);
-    const value = escapeXml(line.value);
-    return '<tr>'
-      + `<td align="left">${line.bold ? `<b>${label}</b>` : label}</td>`
-      + `<td align="right">${line.bold ? `<b>${value}</b>` : value}</td>`
-      + '</tr>';
-  });
-
-  const parts = [
-    `<div align="center" style="font-size:34px;font-weight:bold">${escapeXml(RECEIPT_STORE_NAME)}</div>`
-  ];
-  if (logoBase64) {
-    parts.push(`<div align="center"><img src="data:image/png;base64, ${logoBase64}" width="240"/></div>`);
-  }
-  parts.push(`<table width="100%" style="font-size:20px">${rows.join('')}</table>`);
-  if (qrBase64) {
-    parts.push(`<div align="center"><img src="data:image/png;base64, ${qrBase64}" width="240"/></div>`);
-    parts.push(`<div align="center" style="font-size:16px">${escapeXml(RECEIPT_QR_URL)}</div>`);
-  }
-
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<div style="width:${RECEIPT_PRINT_WIDTH_PX}px">${parts.join('')}</div>`;
+// The one XHTML shape this terminal renders: a bare <img/> root, no wrapper. The
+// space after "base64," is required by Adyen.
+function renderLogoXhtml(logoBase64) {
+  return '<?xml version="1.0" encoding="UTF-8"?>\n'
+    + `<img src="data:image/png;base64, ${logoBase64}" width="${RECEIPT_LOGO_PRINT_WIDTH}"/>`;
 }
 
 // One print request. A request carries a single OutputFormat, so text, XHTML and
@@ -715,87 +707,11 @@ async function sendPrintContent(poiId, outputContent, documentQualifier = 'Docum
   });
 }
 
-// Sends one XHTML document to the terminal's printer. The document goes out
-// base64-encoded: sending the raw XML, or base64-encoding it twice, makes the
-// terminal answer Success while printing nothing at all.
-async function sendPrintXhtml(poiId, xhtml) {
-  return sendPrintContent(poiId, {
-    OutputFormat: 'XHTML',
-    OutputXHTML: Buffer.from(xhtml, 'utf8').toString('base64')
-  });
-}
-
-// --------------- API: Print Diagnostics ---------------
-// A print request that returns Success without moving paper means the terminal
-// accepted the message but rendered nothing, which points at the markup rather
-// than at the request. These variants go from the exact shape Adyen documents up
-// to our full receipt, so a few test prints show where rendering stops.
-const PRINT_TEST_VARIANTS = {
-  // Documented shape: bare img element, no wrapper.
-  image: () => `<?xml version="1.0" encoding="UTF-8"?>\n<img src="data:image/png;base64, ${loadReceiptLogo()}" width="240"/>`,
-  // Same image, wrapped in an element.
-  imageInDiv: () => `<?xml version="1.0" encoding="UTF-8"?>\n<div align="center"><img src="data:image/png;base64, ${loadReceiptLogo()}" width="240"/></div>`,
-  // Text only: shows whether the renderer handles anything besides images.
-  text: () => `<?xml version="1.0" encoding="UTF-8"?>\n<div>Plain XHTML text</div>`,
-  // Text with a font size, which is what makes the store name larger.
-  styledText: () => `<?xml version="1.0" encoding="UTF-8"?>\n<div align="center" style="font-size:34px;font-weight:bold">Big Store Name</div>`,
-  // A table, which is how the receipt aligns amounts.
-  table: () => `<?xml version="1.0" encoding="UTF-8"?>\n<table width="100%"><tr><td align="left">Total</td><td align="right">EUR 9.99</td></tr></table>`
-};
-
-app.post('/api/print-test', async (req, res) => {
-  const { variant } = req.body;
-  const build = PRINT_TEST_VARIANTS[variant];
-  if (!build && variant !== 'controlText' && variant !== 'controlQr') {
-    return res.status(400).json({
-      error: `Unknown variant. Use one of: controlText, controlQr, ${Object.keys(PRINT_TEST_VARIANTS).join(', ')}`
-    });
-  }
-  const poiId = getActivePoiId();
-  if (!poiId) return res.status(400).json({ error: 'No terminal is selected' });
-
-  try {
-    // Controls that use formats other than XHTML: if these print and none of the
-    // XHTML variants do, the terminal does not render XHTML at all.
-    if (variant === 'controlText' || variant === 'controlQr') {
-      const outputContent = variant === 'controlText'
-        ? { OutputFormat: 'Text', OutputText: [{ Text: 'Plain Text format works', Alignment: 'Centred', EndOfLineFlag: true }] }
-        : { OutputFormat: 'BarCode', OutputBarcode: { BarcodeType: 'QRCode', BarcodeValue: RECEIPT_QR_URL } };
-      const controlData = await sendPrintContent(poiId, outputContent, variant === 'controlQr' ? 'CustomerReceipt' : 'Document');
-      const controlResponse = controlData?.SaleToPOIResponse?.PrintResponse?.Response;
-      return res.json({
-        variant,
-        poiId,
-        result: controlResponse?.Result,
-        errorCondition: controlResponse?.ErrorCondition,
-        additionalResponse: controlResponse?.AdditionalResponse,
-        adyenResponse: controlData
-      });
-    }
-
-    const xhtml = build();
-    const data = await sendPrintXhtml(poiId, xhtml);
-    const response = data?.SaleToPOIResponse?.PrintResponse?.Response;
-    res.json({
-      variant,
-      poiId,
-      base64Length: Buffer.from(xhtml, 'utf8').toString('base64').length,
-      xhtml: xhtml.replace(/base64, [A-Za-z0-9+/=]+/, 'base64, <IMAGE_DATA>'),
-      result: response?.Result,
-      errorCondition: response?.ErrorCondition,
-      additionalResponse: response?.AdditionalResponse,
-      adyenResponse: data
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // --------------- API: Reprint Receipt ---------------
 // Reprints the shopper receipt of an earlier payment on the terminal that took
 // it. ReceiptReprintFlag on a TransactionStatus request does not reliably put
 // paper out (it mainly returns the receipt data), so this instead renders the
-// receipt data into XHTML and sends an explicit Terminal API Print request.
+// receipt data itself and sends explicit Terminal API Print requests.
 // Requires a cloud-connected terminal with a built-in printer; the Payments app
 // (Tap to Pay) cannot print at all.
 app.post('/api/reprint-receipt', async (req, res) => {
@@ -851,24 +767,46 @@ app.post('/api/reprint-receipt', async (req, res) => {
       totalAmount: buildItemLines(order)
     }));
 
-    // 240 px of the 384 px print head, and margin 1 so the quiet zone around the
-    // code is not lost against the paper edge.
-    const qrPng = await QRCode.toBuffer(RECEIPT_QR_URL, { type: 'png', width: 240, margin: 1 });
-    const xhtml = renderReceiptXhtml(lines, {
-      logoBase64: loadReceiptLogo(),
-      qrBase64: qrPng.toString('base64')
-    });
-
-    const data = await sendPrintXhtml(poiId, xhtml);
-    const response = data?.SaleToPOIResponse?.PrintResponse?.Response;
-    if (response?.Result === 'Success') {
-      return res.json({ success: true, adyenResponse: data });
+    const logoBase64 = loadReceiptLogo();
+    // Without the header image the store name has to be printed as plain text.
+    if (!logoBase64) {
+      lines.unshift({ type: 'centred', text: RECEIPT_STORE_NAME, bold: true }, { type: 'blank' });
     }
-    const errorCondition = response?.ErrorCondition || '';
+    lines.push({ type: 'blank' }, { type: 'centred', text: 'Scan to visit us' });
+
+    // The paper does not advance between requests, so these three print as one
+    // continuous receipt in the order they are sent.
+    const steps = [];
+    const runStep = async (name, outputContent, documentQualifier) => {
+      const data = await sendPrintContent(poiId, outputContent, documentQualifier);
+      const response = data?.SaleToPOIResponse?.PrintResponse?.Response;
+      steps.push({ step: name, result: response?.Result, errorCondition: response?.ErrorCondition, adyenResponse: data });
+      return response?.Result === 'Success';
+    };
+
+    if (logoBase64) {
+      await runStep('header', {
+        OutputFormat: 'XHTML',
+        OutputXHTML: Buffer.from(renderLogoXhtml(logoBase64), 'utf8').toString('base64')
+      });
+    }
+    const detailsOk = await runStep('details', {
+      OutputFormat: 'Text',
+      OutputText: renderReceiptText(lines)
+    });
+    await runStep('qrCode', {
+      OutputFormat: 'BarCode',
+      OutputBarcode: { BarcodeType: 'QRCode', BarcodeValue: RECEIPT_QR_URL }
+    }, 'CustomerReceipt');
+
+    if (detailsOk) {
+      return res.json({ success: true, steps });
+    }
+    const failed = steps.find(s => s.result !== 'Success');
     res.status(400).json({
-      error: `Print failed${errorCondition ? ` (${errorCondition})` : ''}`,
-      errorCondition,
-      adyenResponse: data
+      error: `Print failed${failed?.errorCondition ? ` (${failed.errorCondition})` : ''}`,
+      errorCondition: failed?.errorCondition || '',
+      steps
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
