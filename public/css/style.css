@@ -434,7 +434,7 @@ html, body {
   border-radius: 10px !important;
 }
 .settings-mode {
-  margin-bottom: 0;
+  margin-bottom: clamp(6px, 1vw, 12px);
 }
 /* Tap to Pay */
 .ttp-field {
@@ -524,10 +524,10 @@ html, body {
 .toggle-row {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 .toggle-text {
-  font-size: .82rem;
+  font-size: clamp(.6rem, .95vw, .74rem);
   font-weight: 500;
   color: var(--text-light);
   user-select: none;
@@ -536,10 +536,10 @@ html, body {
   display: none;
 }
 .toggle-slider-label {
-  width: 42px;
-  height: 24px;
+  width: 34px;
+  height: 20px;
   background: var(--success);
-  border-radius: 12px;
+  border-radius: 10px;
   position: relative;
   cursor: pointer;
   transition: background .3s ease;
@@ -549,14 +549,14 @@ html, body {
   content: '';
   position: absolute;
   top: 2px; left: 2px;
-  width: 20px; height: 20px;
+  width: 16px; height: 16px;
   background: #fff;
   border-radius: 50%;
   transition: transform .3s ease;
   box-shadow: 0 1px 3px rgba(0,0,0,.15);
 }
 .toggle-checkbox:checked + .toggle-slider-label { background: var(--warning); }
-.toggle-checkbox:checked + .toggle-slider-label::after { transform: translateX(18px); }
+.toggle-checkbox:checked + .toggle-slider-label::after { transform: translateX(14px); }
 
 #main-content {
   display: flex;
@@ -846,22 +846,23 @@ html, body {
 .product-price { color: var(--text-light); font-weight: 700; font-size: .92rem; }
 
 /* ============ Terminal Display ============ */
+/* Lives inside the settings panel: as a row sibling the API log squeezed it down to
+   an unreadable sliver. Sized by content here, with its own scroll when busy. */
 .terminal-display {
-  flex: 1;
-  min-width: 120px;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
 }
 .terminal-display-content {
-  background: rgba(255,255,255,.92);
+  background: rgba(0,0,0,.03);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 14px 16px;
-  flex: 1;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  max-height: 14rem;
+  overflow-y: auto;
 }
 .terminal-display-content { position: relative; }
 .btn-clear-display {
@@ -883,16 +884,16 @@ html, body {
   background: rgba(0,0,0,.05);
 }
 .terminal-display-idle {
-  font-size: 1.1rem;
+  font-size: .82rem;
   color: rgba(0,0,0,.3);
 }
 .terminal-display-block {
-  padding: 6px 0;
+  padding: 4px 0;
   border-bottom: 1px solid rgba(0,0,0,.06);
 }
 .terminal-display-block:last-child { border-bottom: none; }
 .terminal-display-label {
-  font-size: .85rem;
+  font-size: .7rem;
   font-weight: 600;
   color: var(--primary);
   font-family: 'SF Mono', ui-monospace, monospace;
@@ -906,9 +907,9 @@ html, body {
   letter-spacing: .3px;
 }
 .terminal-display-line {
-  font-size: 1.1rem;
+  font-size: .82rem;
   color: rgba(0,0,0,.8);
-  padding: 3px 0;
+  padding: 2px 0;
   animation: displayFadeIn .3s ease;
 }
 @keyframes displayFadeIn {
@@ -1351,7 +1352,7 @@ html, body {
   .product-name { font-size: .78rem; }
   .product-price { font-size: .82rem; }
 
-  .terminal-display { min-height: 180px; }
+  .terminal-display-content { max-height: 11rem; }
 
   /* Cart: natural height, no inner scroll lock */
   #cart-section { flex: none; overflow: visible; padding: 0 14px 16px; }
