@@ -1,3 +1,6 @@
+// How many entries the API log keeps before the oldest are dropped.
+const LOG_MAX_ENTRIES = 60;
+
 // ====================== State ======================
 const state = {
   cart: [],        // { product, qty }
@@ -255,6 +258,15 @@ function setupSSE() {
       showToast('Reconnected — terminal list changed on the server', 'warning');
     }
     if (state.config.poiId) checkTerminal({ silent: true });
+  });
+
+  // Every Terminal API request the server sends is mirrored here, so the log shows
+  // what went out and not only what came back. It arrives while the call is still
+  // in flight, so it lands just below its own response once that is logged.
+  es.addEventListener('apiRequest', (e) => {
+    const { category, endpoint, payload } = JSON.parse(e.data);
+    const route = String(endpoint || '').split('/').pop();
+    showApiResponse(route ? `${category} · ${route}` : category, payload, 'request');
   });
 
   es.addEventListener('ordersCleared', () => {
@@ -1888,7 +1900,7 @@ async function copyToClipboard(text) {
   }
 }
 
-function showApiResponse(label, data) {
+function showApiResponse(label, data, direction = 'response') {
   const time = new Date().toLocaleTimeString();
   const json = JSON.stringify(data, null, 2);
 
@@ -1896,15 +1908,24 @@ function showApiResponse(label, data) {
   const empty = $apiResponse.querySelector('.log-empty');
   if (empty) empty.remove();
 
+  const isRequest = direction === 'request';
+
   const entry = document.createElement('div');
-  entry.className = 'log-entry';
+  entry.className = `log-entry log-entry-${isRequest ? 'request' : 'response'}`;
 
   const header = document.createElement('div');
   header.className = 'log-entry-header';
 
   const title = document.createElement('span');
   title.className = 'log-entry-title';
-  title.textContent = `${label} [${time}]`;
+
+  // The direction is a separate coloured element rather than part of the text, so
+  // a request and its response can be told apart at a glance while scrolling.
+  const tag = document.createElement('span');
+  tag.className = 'log-entry-tag';
+  tag.textContent = isRequest ? '\u2191 REQUEST' : '\u2193 RESPONSE';
+  title.appendChild(tag);
+  title.appendChild(document.createTextNode(`${label} [${time}]`));
 
   const toggleBtn = document.createElement('button');
   toggleBtn.className = 'log-entry-toggle';
@@ -1931,6 +1952,12 @@ function showApiResponse(label, data) {
   entry.appendChild(body);
 
   $apiResponse.insertBefore(entry, $apiResponse.firstChild);
+
+  // Now that requests are logged alongside responses the panel fills about twice
+  // as fast, and a receipt print alone adds three entries. Drop the oldest beyond
+  // a cap so a long shift cannot grow the DOM without bound.
+  const entries = $apiResponse.querySelectorAll('.log-entry');
+  for (let i = LOG_MAX_ENTRIES; i < entries.length; i++) entries[i].remove();
 }
 
 // ====================== Clear Orders ======================

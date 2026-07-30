@@ -312,6 +312,15 @@ function makeHeader(category, messageType = 'Request') {
 }
 
 async function adyenRequest(endpoint, body) {
+  // Mirror the outgoing request to the API log. Done here rather than at each call
+  // site because every Terminal API call funnels through this function, so one
+  // broadcast covers payments, card acquisition, printing, aborts and the rest.
+  broadcastSSE('apiRequest', {
+    category: body?.SaleToPOIRequest?.MessageHeader?.MessageCategory || 'Request',
+    endpoint,
+    payload: body
+  });
+
   const res = await fetch(endpoint, {
     method: 'POST',
     headers: {
