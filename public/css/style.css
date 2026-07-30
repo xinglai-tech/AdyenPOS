@@ -414,6 +414,9 @@ html, body {
 .settings-buttons {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  /* Equal rows: a label that wraps to two lines otherwise makes only its own row
+     taller, so the four buttons ended up at two different heights. */
+  grid-auto-rows: 1fr;
   align-items: stretch;
   gap: clamp(6px, 0.8vw, 10px);
   /* Generous floor: the Tap to Pay button sits directly above the Sync/Async
@@ -428,9 +431,11 @@ html, body {
   justify-content: flex-start;
   text-align: left;
   white-space: normal;
-  gap: 6px;
+  gap: 5px;
   line-height: 1.25;
-  padding: clamp(7px, 0.9vw, 11px) clamp(8px, 0.9vw, 12px) !important;
+  /* Narrow horizontal padding buys the label the width it needs to stay on one
+     line in the two-column grid. */
+  padding: clamp(7px, 0.9vw, 11px) clamp(6px, 0.6vw, 9px) !important;
   font-size: clamp(.58rem, 1vw, .74rem) !important;
   border-radius: 10px !important;
 }
