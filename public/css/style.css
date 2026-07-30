@@ -1339,13 +1339,6 @@ html, body {
   stroke-width: 2;
   color: #1d1d1f;
 }
-.paymethod-hint {
-  text-align: left;
-  font-size: .56rem;
-  color: var(--text-light);
-  line-height: 1.5;
-  margin: -8px 0 0;
-}
 /* Cancel sits alone under the list, so give it a bigger touch target than the
    default compact .btn used in other modals. */
 .modal-paymethod .overlay-actions .btn {
