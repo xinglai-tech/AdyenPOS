@@ -1343,7 +1343,9 @@ app.post('/api/loyalty/confirm', async (req, res) => {
             OutputText: [
               { Text: 'Welcome back' },
               { Text: `Our VIP ${member.displayName}\nRedeem ${discount} of ${member.points} points?\nYou pay ${cur} ${payable.toFixed(2)}` },
-              { Text: 'No' },
+              // Declining charges the full basket straight away, so the button says
+              // what it costs rather than leaving the shopper to infer it.
+              { Text: `No - Pay ${total.toFixed(2)} ${cur}` },
               { Text: 'Yes' }
             ]
           }
