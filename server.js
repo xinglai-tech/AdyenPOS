@@ -557,7 +557,7 @@ const RECEIPT_LOGO_MAX_BYTES = 180000;
 // Widest the print head can render. An image wider than this is rejected rather
 // than scaled, because scaling a 1-bit image server-side needs an image library.
 const RECEIPT_LOGO_MAX_WIDTH = 384;
-const RECEIPT_LOGO_MAX_HEIGHT = 600;
+const RECEIPT_LOGO_MAX_HEIGHT = 300;
 
 // Reads width and height out of a PNG's IHDR chunk, which always comes first and
 // at a fixed offset, and doubles as a check that this really is a PNG.

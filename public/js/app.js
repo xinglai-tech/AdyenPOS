@@ -712,7 +712,7 @@ async function deleteTerminal(poiId) {
 // before it is uploaded. That keeps it well inside the size the terminal accepts
 // and shows the shopper-facing result in the preview.
 const LOGO_MAX_WIDTH = 384;
-const LOGO_MAX_HEIGHT = 600;
+const LOGO_MAX_HEIGHT = 300;
 const LOGO_MAX_FILE_BYTES = 10 * 1024 * 1024;
 const LOGO_THRESHOLD = 150;
 
