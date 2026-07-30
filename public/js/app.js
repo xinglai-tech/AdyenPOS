@@ -1036,7 +1036,9 @@ function closePaymethodModal() {
   $paymethodModal.classList.add('hidden');
 }
 
-async function processPayment(allowedBrand) {
+// forceEntryMode restricts how the terminal may read the card. 'Keyed' is Manual
+// Key Entry: the terminal, not this app, prompts for the card number and expiry.
+async function processPayment(allowedBrand, forceEntryMode) {
   closePaymethodModal();
 
   const total = cartTotal();
@@ -1057,6 +1059,7 @@ async function processPayment(allowedBrand) {
     serviceId
   };
   if (allowedBrand) body.allowedPaymentBrand = allowedBrand;
+  if (forceEntryMode) body.forceEntryMode = forceEntryMode;
 
   if (state.isAsync) {
     await payAsync(body);
@@ -1542,7 +1545,7 @@ function bindEvents() {
   $inputPoiId.addEventListener('keydown', (e) => { if (e.key === 'Enter') confirmAddTerminal(); });
   $btnPaymethodCancel.addEventListener('click', closePaymethodModal);
   $paymethodModal.querySelectorAll('.paymethod-btn').forEach(btn => {
-    btn.addEventListener('click', () => processPayment(btn.dataset.brand || ''));
+    btn.addEventListener('click', () => processPayment(btn.dataset.brand || '', btn.dataset.entryMode || ''));
   });
   document.getElementById('btn-clear-display').addEventListener('click', clearTerminalDisplay);
   $btnReceiptOpen.addEventListener('click', openReceiptModal);

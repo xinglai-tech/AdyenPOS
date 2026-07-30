@@ -965,7 +965,16 @@ app.delete('/api/orders', (req, res) => {
 
 // --------------- API: Make Payment ---------------
 app.post('/api/payment', async (req, res) => {
-  const { amount, currency, items, useAsync, serviceId: clientServiceId, allowedPaymentBrand } = req.body;
+  const { amount, currency, items, useAsync, serviceId: clientServiceId, allowedPaymentBrand, forceEntryMode } = req.body;
+
+  // Restricting the card entry mode is what turns a payment into Manual Key Entry
+  // ('Keyed'), where the terminal itself prompts for the card number and expiry.
+  // Adyen Support has to enable MKE on the terminal first, and only these values
+  // are accepted by the Terminal API.
+  const ENTRY_MODES = ['Keyed', 'Contactless', 'ICC', 'MagStripe', 'Manual', 'Tapped', 'RFID', 'Scanned', 'File', 'SynchronousICC'];
+  if (forceEntryMode && !ENTRY_MODES.includes(forceEntryMode)) {
+    return res.status(400).json({ error: `Unsupported entry mode: ${forceEntryMode}` });
+  }
 
   const header = makeHeader('Payment');
   // Allow client to provide serviceId so it can issue cancel during sync wait
@@ -1011,9 +1020,10 @@ app.post('/api/payment', async (req, res) => {
             Currency: order.currency,
             RequestedAmount: amount
           },
-          ...(allowedPaymentBrand ? {
+          ...(allowedPaymentBrand || forceEntryMode ? {
             TransactionConditions: {
-              AllowedPaymentBrand: [allowedPaymentBrand]
+              ...(allowedPaymentBrand ? { AllowedPaymentBrand: [allowedPaymentBrand] } : {}),
+              ...(forceEntryMode ? { ForceEntryMode: [forceEntryMode] } : {})
             }
           } : {})
         }
