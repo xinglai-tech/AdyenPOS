@@ -295,15 +295,12 @@ html, body {
   /* A share of the row, not of the viewport: opening the API log narrows the row, and
      this way the panel gives width back to the product grid instead of keeping it.
      The rem bounds still track the larger root font used on big screens. */
-  width: clamp(11.5rem, 35%, 24rem);
+  width: clamp(10.5rem, 27%, 19rem);
   /* Must not shrink: the product grid's fit-content basis is wider than the row, so
      flex would take the overflow off both items in proportion and widening this one
      had almost no visible effect. The clamp keeps it well inside the row anyway. */
   flex-shrink: 0;
   min-width: 0;
-}
-#product-settings-row .section-title {
-  margin-bottom: 8px;
 }
 #settings-section .settings-inner {
   background: var(--card-bg);
@@ -925,22 +922,14 @@ html, body {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 0 24px 16px;
+  padding: 4px 24px 16px;
   overflow: hidden;
-}
-
-.cart-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-  flex-shrink: 0;
 }
 
 .cart-items {
   flex: 1;
-  /* min-height:0 lets the list (not the header/footer) absorb the shrink, so
-     the cart title and totals never get squashed or overlapped. */
+  /* min-height:0 lets the list (not the footer) absorb the shrink, so the
+     totals and action buttons never get squashed or overlapped. */
   min-height: 0;
   overflow-y: auto;
   border: 1px solid var(--border);
