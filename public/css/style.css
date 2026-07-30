@@ -122,12 +122,6 @@ html, body {
 }
 .order-card-id { font-size: .72rem; color: rgba(255,255,255,.75); font-family: 'SF Mono', ui-monospace, monospace; }
 
-.order-card-brand {
-  font-size: .68rem;
-  font-weight: 600;
-  color: #fbbf24;
-  margin-bottom: 4px;
-}
 .order-card-reason {
   font-size: .68rem;
   color: #ff6b6b;
@@ -1000,7 +994,6 @@ html, body {
   overflow: hidden;
 }
 
-.terminal-section { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 /* Switch terminal modal */
 .switch-modal-content {
   max-width: 400px;
@@ -1056,52 +1049,6 @@ html, body {
   margin: 0 0 8px;
 }
 .switch-modal-error.hidden { display: none; }
-
-.terminal-status {
-  font-size: .75rem;
-  font-weight: 500;
-  padding: 4px 12px;
-  border-radius: 20px;
-}
-.terminal-status.online  { background: rgba(52,199,89,.12); color: var(--success); }
-.terminal-status.offline { background: rgba(255,59,48,.12); color: var(--danger); }
-.terminal-status.checking { background: rgba(255,149,0,.12); color: var(--warning); }
-
-.terminal-id { font-size: .72rem; color: var(--text-light); font-family: 'SF Mono', ui-monospace, monospace; }
-
-
-/* Toggle switch */
-.toggle-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: .82rem;
-  font-weight: 500;
-  cursor: pointer;
-  user-select: none;
-  color: var(--text-light);
-}
-.toggle-label input { display: none; }
-.toggle-slider {
-  width: 42px;
-  height: 24px;
-  background: var(--success);
-  border-radius: 12px;
-  position: relative;
-  transition: background .3s ease;
-}
-.toggle-slider::after {
-  content: '';
-  position: absolute;
-  top: 2px; left: 2px;
-  width: 20px; height: 20px;
-  background: #fff;
-  border-radius: 50%;
-  transition: transform .3s ease;
-  box-shadow: 0 1px 3px rgba(0,0,0,.15);
-}
-.toggle-label input:checked + .toggle-slider { background: var(--warning); }
-.toggle-label input:checked + .toggle-slider::after { transform: translateX(18px); }
 
 /* ============ Product Section ============ */
 #product-section {
@@ -1212,13 +1159,6 @@ html, body {
   color: var(--primary);
   font-family: 'SF Mono', ui-monospace, monospace;
   margin-bottom: 2px;
-}
-.terminal-display-txnid {
-  font-size: .75rem;
-  color: rgba(0,0,0,.4);
-  font-family: monospace;
-  margin-bottom: 4px;
-  letter-spacing: .3px;
 }
 .terminal-display-line {
   font-size: .82rem;
@@ -1353,9 +1293,6 @@ html, body {
 .btn-danger:hover:not(:disabled) { background: var(--danger-hover); }
 .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
 .btn-outline:hover:not(:disabled) { background: rgba(0,0,0,.03); }
-.btn-text { background: none; color: var(--text-light); padding: 4px 8px; }
-.btn-text:hover { color: var(--danger); }
-.btn-sm { padding: 6px 14px; font-size: .72rem; border-radius: 8px; }
 .btn-action { flex: 1; justify-content: center; padding: 12px 20px; font-size: .85rem; }
 
 .icon { font-style: normal; }

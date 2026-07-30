@@ -35,8 +35,6 @@ const PRINTER_MODEL_PREFIXES = (process.env.PRINTER_TERMINAL_MODELS || 'S1F2,S1F
 // --------------- Tap to Pay (Android Payments app) config ---------------
 const PAYMENTS_APP_MGMT_BASE = 'https://management-test.adyen.com/v1';
 const PAYMENTS_APP_DEFAULT_STORE = process.env.ADYEN_PAYMENTS_APP_STORE_ID || 'ST32CQ6223229X5PBQCM9BCWF';
-// App Link base for the TEST Payments app
-const PAYMENTS_APP_LINK_BASE = 'https://www.adyen.com/test';
 
 function getNexoSecurityKey() {
   return {
@@ -363,9 +361,6 @@ app.post('/api/activity', (req, res) => {
   broadcastSSE('userActivity', { sessionId, timestamp: Date.now() });
   res.json({ ok: true });
 });
-
-// --------------- API: Orders ---------------
-app.get('/api/orders', (_req, res) => res.json(orders));
 
 // --------------- API: SSE for real-time updates ---------------
 app.get('/api/events', (req, res) => {
