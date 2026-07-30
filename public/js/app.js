@@ -1900,9 +1900,20 @@ async function copyToClipboard(text) {
   }
 }
 
+// PaymentReceipt carries the whole formatted receipt as dozens of line objects,
+// which pushes everything worth reading out of view. The log shows a summary of it
+// instead. Only the log is affected: printing and reprinting use the response as it
+// came back from Adyen, which is stored on the order untouched.
+function summariseReceipts(key, value) {
+  if (key !== 'PaymentReceipt' || !Array.isArray(value)) return value;
+  const lines = value.reduce((n, r) => n + (r?.OutputContent?.OutputText?.length || 0), 0);
+  const kinds = value.map(r => r?.DocumentQualifier).filter(Boolean).join(', ');
+  return `[omitted from the log: ${kinds || `${value.length} receipts`} — ${lines} lines]`;
+}
+
 function showApiResponse(label, data, direction = 'response') {
   const time = new Date().toLocaleTimeString();
-  const json = JSON.stringify(data, null, 2);
+  const json = JSON.stringify(data, summariseReceipts, 2);
 
   // Remove empty placeholder
   const empty = $apiResponse.querySelector('.log-empty');
