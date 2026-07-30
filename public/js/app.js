@@ -675,20 +675,20 @@ function formatBrand(brand) {
 // only decides which outline is drawn: the exact casing matters far less than being
 // able to tell a countertop unit from something the staff carry around.
 const TERMINAL_MODELS = {
-  AMS1:  { label: 'AMS1',       family: 'mobile',     tagline: 'All-in-one Android terminal' },
-  SFO1:  { label: 'Adyen SFO1', family: 'countertop', tagline: 'Payments, branding and engagement' },
-  E285:  { label: 'e285',       family: 'reader',     tagline: 'Pocket-sized, for personal shopping' },
-  S1U2:  { label: 'S1U2',       family: 'unattended', tagline: 'All-in-one unattended Android device' },
-  P630:  { label: 'P630',       family: 'countertop', tagline: 'Premium design, ultra-reliable' },
-  V400M: { label: 'V400m',      family: 'printer',    tagline: 'Portable, with fast printing' },
-  V240M: { label: 'V240m Plus', family: 'printer',    tagline: 'Portable and always connected' },
-  V400C: { label: 'V400c Plus', family: 'countertop', tagline: 'Countertop, with added printer' },
-  S1F2:  { label: 'S1F2',       family: 'printer',    tagline: 'All-in-one Android with printing power' },
-  S1E2L: { label: 'S1E2L',      family: 'mobile',     tagline: 'Sleek, durable, mobile Android' },
-  NYC1:  { label: 'NYC1',       family: 'reader',     tagline: 'Card reader for businesses on the move' },
-  M450:  { label: 'M450',       family: 'countertop', tagline: 'Impact, insights and two-way interactions' },
-  S1E4:  { label: 'S1E4 Pro',   family: 'mobile',     tagline: 'Drop-, dust- and splash-proof' },
-  S1F4:  { label: 'S1F4 Pro',   family: 'printer',    tagline: 'Smart and portable, with a printer' }
+  AMS1:  { label: 'AMS1',       family: 'mobile' },
+  SFO1:  { label: 'Adyen SFO1', family: 'countertop' },
+  E285:  { label: 'e285',       family: 'reader' },
+  S1U2:  { label: 'S1U2',       family: 'unattended' },
+  P630:  { label: 'P630',       family: 'countertop' },
+  V400M: { label: 'V400m',      family: 'printer' },
+  V240M: { label: 'V240m Plus', family: 'printer' },
+  V400C: { label: 'V400c Plus', family: 'countertop' },
+  S1F2:  { label: 'S1F2',       family: 'printer' },
+  S1E2L: { label: 'S1E2L',      family: 'mobile' },
+  NYC1:  { label: 'NYC1',       family: 'reader' },
+  M450:  { label: 'M450',       family: 'countertop' },
+  S1E4:  { label: 'S1E4 Pro',   family: 'mobile' },
+  S1F4:  { label: 'S1F4 Pro',   family: 'printer' }
 };
 
 // Line art rather than product photography: it stays legible at this size, needs no
@@ -714,12 +714,29 @@ function terminalModelInfo(poiId) {
   const match = TERMINAL_MODELS[key] || TERMINAL_MODELS[
     Object.keys(TERMINAL_MODELS).filter(k => key.startsWith(k)).sort((a, b) => b.length - a.length)[0]
   ];
+  const label = match?.label || rawModel || 'Terminal';
   return {
-    label: match?.label || rawModel || 'Terminal',
+    label,
     family: match?.family || 'mobile',
-    tagline: match?.tagline || '',
-    serial
+    serial,
+    title: serial ? `${label} - ${serial}` : label
   };
+}
+
+// One document-level listener rather than one per render: the picker markup is
+// replaced wholesale every time the terminal list changes.
+let _terminalPickerBound = false;
+function bindTerminalPicker() {
+  if (_terminalPickerBound) return;
+  _terminalPickerBound = true;
+  document.addEventListener('click', (e) => {
+    const picker = document.getElementById('terminal-picker');
+    if (picker && !picker.contains(e.target)) picker.classList.remove('open');
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    document.getElementById('terminal-picker')?.classList.remove('open');
+  });
 }
 
 function renderTerminals() {
@@ -741,12 +758,27 @@ function renderTerminals() {
 
   const options = list.map(t => {
     const opt = terminalModelInfo(t.poiId);
-    const mark = checked && !onlineSet.has(t.poiId) ? ' (offline)' : '';
-    return `<option value="${t.poiId}"${t.poiId === active.poiId ? ' selected' : ''}>${opt.label} · ${opt.serial}${mark}</option>`;
+    const isActive = t.poiId === active.poiId;
+    const off = checked && !onlineSet.has(t.poiId);
+    return `
+      <button type="button" class="terminal-option${isActive ? ' selected' : ''}" role="option"
+              aria-selected="${isActive}" data-poi="${t.poiId}">
+        <span class="terminal-option-name">${opt.title}</span>
+        ${off ? '<span class="terminal-option-off">Offline</span>' : ''}
+        <svg class="terminal-option-tick" viewBox="0 0 14 14" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5 5.5 11 12 3.5"/></svg>
+      </button>`;
   }).join('');
 
   $terminalList.innerHTML = `
-    <select id="terminal-select" class="terminal-select" aria-label="Active terminal">${options}</select>
+    <div class="terminal-picker" id="terminal-picker">
+      <button type="button" class="terminal-picker-btn" aria-haspopup="listbox">
+        <span class="terminal-picker-value">${info.title}</span>
+        <svg class="terminal-picker-chevron" viewBox="0 0 12 8" fill="none" stroke="currentColor"
+             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1.5 6 6.5l5-5"/></svg>
+      </button>
+      <div class="terminal-picker-menu" role="listbox">${options}</div>
+    </div>
     <div class="terminal-card">
       <div class="terminal-thumb">
         <svg viewBox="0 0 40 56" fill="none" stroke="currentColor" stroke-width="1.6"
@@ -758,13 +790,20 @@ function renderTerminals() {
           ${checked ? `<span class="terminal-status-dot ${online ? 'online' : 'offline'}">${online ? 'Online' : 'Offline'}</span>` : ''}
         </div>
         ${info.serial ? `<div class="terminal-serial">${info.serial}</div>` : ''}
-        ${info.tagline ? `<div class="terminal-tagline">${info.tagline}</div>` : ''}
       </div>
       <button class="terminal-delete-btn" onclick="deleteTerminal('${active.poiId}')" title="Remove this terminal">✕</button>
     </div>`;
 
-  document.getElementById('terminal-select')
-    .addEventListener('change', e => selectTerminal(e.target.value));
+  const picker = document.getElementById('terminal-picker');
+  picker.querySelector('.terminal-picker-btn')
+    .addEventListener('click', () => picker.classList.toggle('open'));
+  picker.querySelectorAll('.terminal-option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      picker.classList.remove('open');
+      if (btn.dataset.poi !== active.poiId) selectTerminal(btn.dataset.poi);
+    });
+  });
+  bindTerminalPicker();
 
   state.config.poiId = active.poiId;
   state.terminalOnline = !!active;

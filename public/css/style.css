@@ -331,6 +331,14 @@ html, body {
   letter-spacing: .3px;
   margin-bottom: 6px;
 }
+/* Reads as a heading for the control below it rather than as one of the small
+   uppercase section captions used elsewhere in the panel. */
+.settings-label-plain {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: .78rem;
+  color: var(--text);
+}
 .terminal-list {
   display: flex;
   flex-direction: column;
@@ -342,31 +350,111 @@ html, body {
   color: var(--muted);
   padding: 6px 0;
 }
-.terminal-select {
+/* Built from buttons rather than a native select: the platform dropdown cannot be
+   styled consistently, and the options here carry a state badge and a tick. */
+.terminal-picker { position: relative; }
+.terminal-picker-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  padding: 8px 30px 8px 10px;
-  font-size: .8rem;
+  padding: 9px 11px;
   font-family: inherit;
+  font-size: .8rem;
   color: var(--text);
+  text-align: left;
   background: #fff;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 9px;
   cursor: pointer;
-  appearance: none;
-  /* Chevron drawn in the background so the control keeps a consistent height
-     across browsers, which a native dropdown arrow does not. */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8' fill='none' stroke='%2386868b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5 6 6.5l5-5'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  background-size: 11px;
   transition: border-color .15s, box-shadow .15s;
 }
-.terminal-select:hover { border-color: var(--muted); }
-.terminal-select:focus {
-  outline: none;
+.terminal-picker-btn:hover { border-color: var(--muted); }
+.terminal-picker.open .terminal-picker-btn {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(0,113,227,.12);
 }
+.terminal-picker-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.terminal-picker-chevron {
+  width: 11px;
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: transform .18s ease;
+}
+.terminal-picker.open .terminal-picker-chevron { transform: rotate(180deg); }
+.terminal-picker-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  max-height: 240px;
+  overflow-y: auto;
+  /* Animated out rather than hidden so the menu does not snap into place, and
+     pointer-events keeps it unclickable while it is fading. */
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition: opacity .15s ease, transform .15s ease, visibility .15s;
+}
+.terminal-picker.open .terminal-picker-menu {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+.terminal-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 9px;
+  font-family: inherit;
+  font-size: .78rem;
+  color: var(--text);
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background .12s;
+}
+.terminal-option:hover { background: rgba(0,0,0,.04); }
+.terminal-option.selected { color: var(--primary); font-weight: 600; }
+.terminal-option-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.terminal-option-off {
+  flex-shrink: 0;
+  font-size: .6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: #c22b22;
+  background: rgba(255,59,48,.12);
+  padding: 2px 5px;
+  border-radius: 20px;
+}
+.terminal-option-tick { width: 13px; flex-shrink: 0; opacity: 0; }
+.terminal-option.selected .terminal-option-tick { opacity: 1; }
 .terminal-card {
   display: flex;
   align-items: flex-start;
@@ -411,11 +499,6 @@ html, body {
   letter-spacing: .08em;
   color: var(--text-light);
   word-break: break-all;
-}
-.terminal-tagline {
-  font-size: .68rem;
-  line-height: 1.35;
-  color: var(--muted);
 }
 .terminal-status-dot {
   font-size: .62rem;
