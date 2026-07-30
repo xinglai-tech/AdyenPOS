@@ -1,0 +1,23 @@
+[
+  {
+    "id": "member-1",
+    "displayName": "Alice Chen",
+    "email": "alice.chen@example.com",
+    "points": 25,
+    "alias": "PASTE_ALIAS_FROM_READ_CARD"
+  },
+  {
+    "id": "member-2",
+    "displayName": "Bob Wong",
+    "email": "bob.wong@example.com",
+    "points": 500,
+    "alias": ""
+  },
+  {
+    "id": "member-3",
+    "displayName": "Carol Tan",
+    "email": "carol.tan@example.com",
+    "points": 0,
+    "alias": ""
+  }
+]

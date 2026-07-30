@@ -7,7 +7,7 @@
   <meta name="description" content="POS Web App with Adyen Terminal Integration" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛒</text></svg>" />
-  <title>POS Terminal</title>
+  <title>POS System</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -59,6 +59,7 @@
                   <button id="btn-ttp-open" class="btn btn-outline settings-btn"><i data-lucide="smartphone-nfc"></i>Tap to Pay</button>
                   <button id="btn-toggle-log" class="btn btn-outline settings-btn"><i data-lucide="terminal"></i>API log</button>
                   <button id="btn-receipt-open" class="btn btn-outline settings-btn"><i data-lucide="receipt-text"></i>Receipt</button>
+                  <button id="btn-loyalty-open" class="btn btn-outline settings-btn"><i data-lucide="badge-percent"></i>Loyalty</button>
                 </div>
                 <!-- Payment Mode -->
                 <div class="settings-group settings-mode">
@@ -220,6 +221,55 @@
 
       <div class="overlay-actions">
         <button id="btn-receipt-close" class="btn btn-outline btn-action">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== Loyalty Modal ==================== -->
+  <div id="loyalty-modal" class="overlay hidden">
+    <div class="overlay-content modal-sm">
+      <h3 class="overlay-title">Loyalty</h3>
+
+      <div class="receipt-section">
+        <div class="settings-label">Members</div>
+        <p class="receipt-hint">A member is matched on the card alias the terminal returns, so paste the alias below into the member you want it to belong to.</p>
+        <div class="logo-buttons">
+          <button id="btn-userdata-open" class="btn btn-outline settings-btn"><i data-lucide="users"></i>User data</button>
+          <button id="btn-loyalty-read" class="btn btn-primary settings-btn"><i data-lucide="nfc"></i>Read card</button>
+        </div>
+      </div>
+
+      <div class="receipt-section">
+        <div class="settings-label">Basket</div>
+        <div id="loyalty-basket" class="logo-meta"></div>
+      </div>
+
+      <div id="loyalty-steps" class="loyalty-steps hidden"></div>
+
+      <div id="loyalty-alias-row" class="loyalty-alias-row hidden">
+        <input type="text" id="loyalty-alias" class="ttp-input" readonly />
+        <button id="btn-loyalty-copy" class="btn btn-outline settings-btn"><i data-lucide="copy"></i>Copy</button>
+      </div>
+
+      <div class="overlay-actions">
+        <button id="btn-loyalty-pay" class="btn btn-primary btn-action hidden">Pay full amount</button>
+        <button id="btn-loyalty-close" class="btn btn-outline btn-action">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== User Data Modal ==================== -->
+  <div id="userdata-modal" class="overlay hidden">
+    <div class="overlay-content modal-userdata">
+      <h3 class="overlay-title">User data</h3>
+      <p class="receipt-hint">Points redeem 1:1 against the basket currency. The alias is what identifies the card at the terminal; leave it empty to disable matching for that member.</p>
+      <div id="userdata-list" class="userdata-list"></div>
+      <div class="logo-buttons">
+        <button id="btn-userdata-add" class="btn btn-outline settings-btn"><i data-lucide="user-plus"></i>Add member</button>
+        <button id="btn-userdata-reset" class="btn btn-outline settings-btn"><i data-lucide="undo-2"></i>Reset</button>
+      </div>
+      <div class="overlay-actions">
+        <button id="btn-userdata-close" class="btn btn-outline btn-action">Close</button>
       </div>
     </div>
   </div>

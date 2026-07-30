@@ -492,6 +492,73 @@ html, body {
   grid-template-columns: 1fr 1fr;
   gap: clamp(6px, 0.8vw, 10px);
 }
+
+/* Loyalty modal */
+.loyalty-steps {
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.loyalty-step {
+  font-size: .72rem;
+  line-height: 1.4;
+  color: var(--text-light);
+}
+.loyalty-step-ok { color: var(--success); }
+.loyalty-step-warning { color: var(--warning); }
+.loyalty-step-error { color: var(--danger); }
+.loyalty-alias-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.loyalty-alias-row .ttp-input {
+  flex: 1;
+  font-size: .7rem;
+}
+.loyalty-alias-row .settings-btn { width: auto; flex-shrink: 0; }
+
+/* User data modal */
+.userdata-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 46vh;
+  overflow-y: auto;
+  margin-bottom: 12px;
+  text-align: left;
+}
+.userdata-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.userdata-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+/* The alias is a long opaque token, so it gets a row of its own. */
+.userdata-fields .userdata-alias { grid-column: 1 / -1; }
+.userdata-fields .ttp-input { font-size: .72rem; }
+.userdata-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.userdata-actions .settings-btn { padding: 6px 10px; font-size: .72rem; }
+
 .settings-mode {
   margin-bottom: clamp(6px, 1vw, 12px);
 }
@@ -1140,6 +1207,9 @@ html, body {
   box-shadow: 0 20px 60px rgba(0,0,0,.2);
 }
 .modal-sm { padding: 30px 36px; max-width: 380px; }
+/* Wider than the other modals because each member is a row of four fields plus
+   its own buttons. Declared here, after .overlay-content, so its max-width wins. */
+.modal-userdata { padding: 26px 30px; max-width: 560px; }
 
 .overlay-content h2 { margin-bottom: 12px; font-size: 1.25rem; font-weight: 700; }
 .overlay-content p { color: var(--text-light); margin-bottom: 8px; font-size: .88rem; }
@@ -1468,6 +1538,9 @@ html, body {
   /* Restated because the .overlay-content rule above has the same specificity but
      comes later in the file, so it would otherwise win and widen this modal. */
   .modal-paymethod { max-width: 270px; padding: 26px 18px; }
+  .modal-userdata { padding: 22px 18px; }
+  /* Two columns leave the name and email inputs too narrow to read on a phone. */
+  .userdata-fields { grid-template-columns: 1fr; }
   #toast-container { left: 12px; right: 12px; }
 }
 

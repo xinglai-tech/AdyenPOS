@@ -5,5 +5,8 @@ node_modules/
 assets/receipt-logo-custom.png
 assets/receipt-settings.json
 
+# Loyalty members edited at runtime; assets/members.default.json is the seed data.
+assets/members.json
+
 .DS_Store
 **/.DS_Store

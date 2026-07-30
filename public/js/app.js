@@ -156,6 +156,24 @@ const $qrMeta          = document.getElementById('qr-meta');
 const $btnQrSave       = document.getElementById('btn-qr-save');
 const $btnQrReset      = document.getElementById('btn-qr-reset');
 
+// Loyalty
+const $loyaltyModal    = document.getElementById('loyalty-modal');
+const $btnLoyaltyOpen  = document.getElementById('btn-loyalty-open');
+const $btnLoyaltyClose = document.getElementById('btn-loyalty-close');
+const $btnLoyaltyRead  = document.getElementById('btn-loyalty-read');
+const $btnLoyaltyPay   = document.getElementById('btn-loyalty-pay');
+const $btnLoyaltyCopy  = document.getElementById('btn-loyalty-copy');
+const $loyaltyBasket   = document.getElementById('loyalty-basket');
+const $loyaltySteps    = document.getElementById('loyalty-steps');
+const $loyaltyAliasRow = document.getElementById('loyalty-alias-row');
+const $loyaltyAlias    = document.getElementById('loyalty-alias');
+const $userdataModal   = document.getElementById('userdata-modal');
+const $btnUserdataOpen = document.getElementById('btn-userdata-open');
+const $btnUserdataClose = document.getElementById('btn-userdata-close');
+const $btnUserdataAdd  = document.getElementById('btn-userdata-add');
+const $btnUserdataReset = document.getElementById('btn-userdata-reset');
+const $userdataList    = document.getElementById('userdata-list');
+
 // Terminal display
 const $terminalDisplay = document.getElementById('terminal-display-content');
 const $btnClearDisplay = document.getElementById('btn-clear-display');
@@ -886,6 +904,295 @@ async function resetReceiptLogo() {
   }
 }
 
+// ====================== Loyalty ======================
+// One card read serves the whole flow: the alias it returns identifies the member,
+// and the reference it returns lets the payment reuse the same card. Both are kept
+// here between the card read and the payment.
+const _loyalty = {
+  cardAcquisition: null,
+  member: null,
+  amount: 0
+};
+
+function loyaltyReset() {
+  _loyalty.cardAcquisition = null;
+  _loyalty.member = null;
+  _loyalty.amount = 0;
+  $loyaltySteps.innerHTML = '';
+  $loyaltySteps.classList.add('hidden');
+  $loyaltyAliasRow.classList.add('hidden');
+  $loyaltyAlias.value = '';
+  $btnLoyaltyPay.classList.add('hidden');
+}
+
+function loyaltyStep(text, tone = 'info') {
+  $loyaltySteps.classList.remove('hidden');
+  const row = document.createElement('div');
+  row.className = `loyalty-step loyalty-step-${tone}`;
+  row.textContent = text;
+  $loyaltySteps.appendChild(row);
+}
+
+function renderLoyaltyBasket() {
+  const currency = state.config.currency || 'EUR';
+  const count = state.cart.reduce((sum, c) => sum + c.qty, 0);
+  $loyaltyBasket.textContent = count === 0
+    ? 'Cart is empty — add products before reading a card'
+    : `${count} item${count === 1 ? '' : 's'} · ${currency} ${cartTotal().toFixed(2)}`;
+}
+
+function openLoyaltyModal() {
+  loyaltyReset();
+  renderLoyaltyBasket();
+  $loyaltyModal.classList.remove('hidden');
+  refreshIcons();
+}
+
+function closeLoyaltyModal() {
+  $loyaltyModal.classList.add('hidden');
+}
+
+// Card acquisition, member lookup and the confirmation question, in the order the
+// terminal has to run them. The reference stays valid only briefly, so the payment
+// is sent straight after.
+async function loyaltyReadCard() {
+  if (state.cart.length === 0) {
+    showToast('Add products to the cart before reading a card', 'warning');
+    return;
+  }
+  if (!state.terminalOnline) {
+    showToast('Terminal is offline — check terminal first', 'warning');
+    return;
+  }
+
+  loyaltyReset();
+  _loyalty.amount = Math.round(cartTotal() * 100) / 100;
+  const currency = state.config.currency || 'EUR';
+
+  $btnLoyaltyRead.disabled = true;
+  loyaltyStep('Waiting for the card on the terminal...');
+
+  try {
+    const res = await fetch('/api/loyalty/read-card', { method: 'POST' });
+    const data = await res.json();
+    showApiResponse('CardAcquisition', data.adyenResponse || data);
+
+    if (!res.ok) {
+      loyaltyStep(data.error || 'The card could not be read', 'error');
+      return;
+    }
+
+    _loyalty.cardAcquisition = data.cardAcquisition;
+    if (data.alias) {
+      $loyaltyAlias.value = data.alias;
+      $loyaltyAliasRow.classList.remove('hidden');
+    }
+    loyaltyStep(`Card read${data.maskedPan ? ` · ${data.maskedPan}` : ''}${data.paymentBrand ? ` · ${data.paymentBrand}` : ''}`, 'ok');
+
+    if (!data.member) {
+      loyaltyStep('No member matches this card — copy the alias into User data to link it', 'warning');
+      $btnLoyaltyPay.classList.remove('hidden');
+      refreshIcons();
+      return;
+    }
+
+    _loyalty.member = data.member;
+    loyaltyStep(`${data.member.displayName} · ${data.member.points} points`, 'ok');
+
+    if (data.member.points <= 0) {
+      loyaltyStep('No points to redeem, charging the full amount', 'warning');
+      await loyaltyPay(0);
+      return;
+    }
+
+    loyaltyStep('Asking on the terminal whether to use the credit...');
+    const confirmRes = await fetch('/api/loyalty/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: data.member.id, amount: _loyalty.amount })
+    });
+    const confirmData = await confirmRes.json();
+    showApiResponse('Input (GetConfirmation)', confirmData.adyenResponse || confirmData);
+
+    if (!confirmRes.ok) {
+      loyaltyStep(confirmData.error || 'The question was not answered', 'error');
+      $btnLoyaltyPay.classList.remove('hidden');
+      refreshIcons();
+      return;
+    }
+
+    if (!confirmData.confirmed) {
+      loyaltyStep('Declined on the terminal, charging the full amount', 'warning');
+      await loyaltyPay(0);
+      return;
+    }
+
+    loyaltyStep(`Redeeming ${confirmData.discount} points · ${currency} ${confirmData.finalAmount.toFixed(2)} on the card`, 'ok');
+    await loyaltyPay(confirmData.discount);
+  } catch (err) {
+    loyaltyStep(`Card read failed: ${err.message}`, 'error');
+  } finally {
+    $btnLoyaltyRead.disabled = false;
+    refreshIcons();
+  }
+}
+
+// Points are worth one currency unit each, so the discount and the points spent
+// are the same number.
+async function loyaltyPay(discount) {
+  const amount = Math.round((_loyalty.amount - discount) * 100) / 100;
+  const extra = {
+    amount,
+    cardAcquisitionReference: _loyalty.cardAcquisition
+  };
+  if (discount > 0 && _loyalty.member) {
+    extra.loyalty = {
+      memberId: _loyalty.member.id,
+      pointsUsed: discount,
+      originalAmount: _loyalty.amount
+    };
+  }
+  closeLoyaltyModal();
+  await processPayment('', '', extra);
+}
+
+// ====================== User data ======================
+function renderUserData(data) {
+  const list = data.members || [];
+  $userdataList.innerHTML = '';
+  if (list.length === 0) {
+    $userdataList.innerHTML = '<div class="empty-state">No members yet</div>';
+    return;
+  }
+
+  for (const member of list) {
+    const row = document.createElement('div');
+    row.className = 'userdata-row';
+    row.innerHTML = `
+      <div class="userdata-fields">
+        <input type="text" class="ttp-input userdata-name" placeholder="Name" />
+        <input type="email" class="ttp-input userdata-email" placeholder="Email" />
+        <input type="number" class="ttp-input userdata-points" min="0" step="1" placeholder="Points" />
+        <input type="text" class="ttp-input userdata-alias" placeholder="Card alias" />
+      </div>
+      <div class="userdata-actions">
+        <button class="btn btn-outline settings-btn userdata-save">Save</button>
+        <button class="btn btn-outline settings-btn userdata-delete">Delete</button>
+      </div>`;
+    // Values are assigned rather than interpolated, so a name with quotes or
+    // angle brackets in it cannot break out of the markup.
+    row.querySelector('.userdata-name').value = member.displayName;
+    row.querySelector('.userdata-email').value = member.email;
+    row.querySelector('.userdata-points').value = member.points;
+    row.querySelector('.userdata-alias').value = member.alias;
+    row.querySelector('.userdata-save').addEventListener('click', () => saveMember(member.id, row));
+    row.querySelector('.userdata-delete').addEventListener('click', () => deleteMember(member.id));
+    $userdataList.appendChild(row);
+  }
+}
+
+async function loadUserData() {
+  try {
+    const res = await fetch('/api/members');
+    if (!res.ok) throw new Error(`Server answered ${res.status}`);
+    renderUserData(await res.json());
+  } catch (err) {
+    $userdataList.innerHTML = '';
+    const error = document.createElement('div');
+    error.className = 'empty-state';
+    error.textContent = `Could not load the members: ${err.message}`;
+    $userdataList.appendChild(error);
+  }
+}
+
+function readMemberRow(row) {
+  return {
+    displayName: row.querySelector('.userdata-name').value,
+    email: row.querySelector('.userdata-email').value,
+    points: row.querySelector('.userdata-points').value,
+    alias: row.querySelector('.userdata-alias').value
+  };
+}
+
+async function saveMember(id, row) {
+  try {
+    const res = await fetch(`/api/members/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(readMemberRow(row))
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || 'Could not save the member', 'error');
+      return;
+    }
+    renderUserData(data);
+    showToast(`${data.member.displayName} saved`, 'success');
+  } catch (err) {
+    showToast(`Could not save the member: ${err.message}`, 'error');
+  }
+}
+
+async function deleteMember(id) {
+  try {
+    const res = await fetch(`/api/members/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || 'Could not delete the member', 'error');
+      return;
+    }
+    renderUserData(data);
+    showToast('Member deleted', 'info');
+  } catch (err) {
+    showToast(`Could not delete the member: ${err.message}`, 'error');
+  }
+}
+
+async function addMember() {
+  try {
+    const res = await fetch('/api/members', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ displayName: 'New member', email: '', points: 0, alias: '' })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || 'Could not add the member', 'error');
+      return;
+    }
+    renderUserData(data);
+  } catch (err) {
+    showToast(`Could not add the member: ${err.message}`, 'error');
+  }
+}
+
+async function resetMembers() {
+  try {
+    const res = await fetch('/api/members/reset', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || 'Could not restore the defaults', 'error');
+      return;
+    }
+    renderUserData(data);
+    showToast('Back to the default members', 'info');
+  } catch (err) {
+    showToast(`Could not restore the defaults: ${err.message}`, 'error');
+  }
+}
+
+function openUserDataModal() {
+  $userdataModal.classList.remove('hidden');
+  loadUserData();
+  refreshIcons();
+}
+
+function closeUserDataModal() {
+  $userdataModal.classList.add('hidden');
+  // The balance shown next to a matched member may have just been edited.
+  renderLoyaltyBasket();
+}
+
 // ====================== Terminal Check ======================
 async function checkTerminal(opts) {
   const silent = !!(opts && opts.silent === true);
@@ -1038,7 +1345,9 @@ function closePaymethodModal() {
 
 // forceEntryMode restricts how the terminal may read the card. 'Keyed' is Manual
 // Key Entry: the terminal, not this app, prompts for the card number and expiry.
-async function processPayment(allowedBrand, forceEntryMode) {
+// `extra` is merged over the request body, which is how the loyalty flow replaces
+// the amount with the discounted one and quotes its card acquisition.
+async function processPayment(allowedBrand, forceEntryMode, extra) {
   closePaymethodModal();
 
   const total = cartTotal();
@@ -1060,6 +1369,7 @@ async function processPayment(allowedBrand, forceEntryMode) {
   };
   if (allowedBrand) body.allowedPaymentBrand = allowedBrand;
   if (forceEntryMode) body.forceEntryMode = forceEntryMode;
+  if (extra) Object.assign(body, extra);
 
   if (state.isAsync) {
     await payAsync(body);
@@ -1560,6 +1870,24 @@ function bindEvents() {
     // Clear the value so picking the same file again still fires a change event.
     e.target.value = '';
   });
+  $btnLoyaltyOpen.addEventListener('click', openLoyaltyModal);
+  $btnLoyaltyClose.addEventListener('click', closeLoyaltyModal);
+  $btnLoyaltyRead.addEventListener('click', loyaltyReadCard);
+  $btnLoyaltyPay.addEventListener('click', () => loyaltyPay(0));
+  $btnLoyaltyCopy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText($loyaltyAlias.value);
+      showToast('Alias copied', 'success');
+    } catch {
+      // Clipboard access needs a secure context, so fall back to selecting it.
+      $loyaltyAlias.select();
+      showToast('Press Cmd/Ctrl+C to copy the alias', 'info');
+    }
+  });
+  $btnUserdataOpen.addEventListener('click', openUserDataModal);
+  $btnUserdataClose.addEventListener('click', closeUserDataModal);
+  $btnUserdataAdd.addEventListener('click', addMember);
+  $btnUserdataReset.addEventListener('click', resetMembers);
   $btnClearOrders.addEventListener('click', clearOrders);
   $orderSearch.addEventListener('input', () => renderOrders());
   $btnClearResp.addEventListener('click', () => { $apiResponse.innerHTML = '<span class="log-empty">No response yet</span>'; });

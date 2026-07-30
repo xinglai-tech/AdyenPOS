@@ -497,6 +497,7 @@ app.post('/api/transaction-status', async (req, res) => {
           order.status = (errorCondition === 'Aborted' || errorCondition === 'Cancel') ? 'cancelled' : 'failed';
         }
         order.response = data;
+        settleLoyalty(order);
         const poiData = paymentResponse.POIData;
         if (poiData?.POITransactionID) {
           order.poiTransactionId = poiData.POITransactionID.TransactionID;
@@ -696,6 +697,15 @@ function buildItemLines(order) {
       type: 'pair',
       label: `${item.name || 'Item'} x${qty}`,
       value: `${currency} ${((item.price || 0) * qty).toFixed(2)}`.trim()
+    });
+  }
+  // Without this the item lines would add up to more than the amount charged,
+  // because the points were taken off the basket before the card was asked to pay.
+  if (order.loyalty?.pointsUsed > 0) {
+    lines.push({
+      type: 'pair',
+      label: `Points redeemed (${order.loyalty.pointsUsed})`,
+      value: `- ${currency} ${order.loyalty.pointsUsed.toFixed(2)}`.trim()
     });
   }
   lines.push({ type: 'blank' });
@@ -963,9 +973,322 @@ app.delete('/api/orders', (req, res) => {
   res.json({ status: 'cleared' });
 });
 
+// --------------- Loyalty: member store ---------------
+// A member is recognised by the card alias returned by a card acquisition, which
+// is why the alias is the one field that has to be filled in from a real card
+// read. Edits are written next to the seed file, so on Azure they survive a
+// restart but not a redeploy, exactly like the receipt logo.
+const MEMBERS_DEFAULT_FILE = path.join(__dirname, 'assets', 'members.default.json');
+const MEMBERS_FILE = path.join(__dirname, 'assets', 'members.json');
+
+// Points redeem 1:1 against the basket currency, so they are whole currency units.
+const MEMBER_MAX_POINTS = 1000000;
+
+// The terminal cannot authorise a zero amount, so a full-basket redemption has to
+// leave something behind for the card to pay.
+const LOYALTY_MIN_CHARGE = 0.01;
+
+function normaliseMember(raw, index) {
+  return {
+    id: typeof raw?.id === 'string' && raw.id ? raw.id : `member-${index + 1}`,
+    displayName: typeof raw?.displayName === 'string' ? raw.displayName : '',
+    email: typeof raw?.email === 'string' ? raw.email : '',
+    points: Number.isFinite(Number(raw?.points)) ? Math.max(0, Math.floor(Number(raw.points))) : 0,
+    alias: typeof raw?.alias === 'string' ? raw.alias.trim() : ''
+  };
+}
+
+function readMembersFile(file) {
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!Array.isArray(parsed)) throw new Error('Expected an array of members');
+  return parsed.map(normaliseMember);
+}
+
+let members = [];
+let membersAreDefaults = true;
+try {
+  members = readMembersFile(MEMBERS_FILE);
+  membersAreDefaults = false;
+} catch {
+  try {
+    members = readMembersFile(MEMBERS_DEFAULT_FILE);
+  } catch (err) {
+    console.warn(`No loyalty members available: ${err.message}`);
+  }
+}
+
+function saveMembers() {
+  fs.writeFileSync(MEMBERS_FILE, JSON.stringify(members, null, 2));
+  membersAreDefaults = false;
+}
+
+// Aliases come back from the terminal as an opaque token; compare them without
+// case sensitivity so an alias pasted in by hand still matches.
+function findMemberByAlias(alias) {
+  const needle = (alias || '').trim().toLowerCase();
+  if (!needle) return null;
+  return members.find(m => m.alias && m.alias.toLowerCase() === needle) || null;
+}
+
+// How many points this basket can absorb, leaving a chargeable remainder. Floored
+// to a whole number because one point is worth one currency unit, so a fractional
+// redemption would mean fractional points.
+function redeemableAmount(points, amount) {
+  return Math.max(0, Math.floor(Math.min(points, amount - LOYALTY_MIN_CHARGE)));
+}
+
+function validateMemberInput(body) {
+  const displayName = typeof body?.displayName === 'string' ? body.displayName.trim() : '';
+  if (!displayName) return { error: 'A name is required' };
+  if (displayName.length > 60) return { error: 'The name is longer than 60 characters' };
+
+  const email = typeof body?.email === 'string' ? body.email.trim() : '';
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return { error: `"${email}" is not a valid email address` };
+  }
+
+  const rawPoints = body?.points;
+  const points = rawPoints === '' || rawPoints === null || rawPoints === undefined ? 0 : Number(rawPoints);
+  if (!Number.isFinite(points) || points < 0) return { error: 'Points must be zero or more' };
+  if (points > MEMBER_MAX_POINTS) return { error: `Points cannot exceed ${MEMBER_MAX_POINTS}` };
+
+  const alias = typeof body?.alias === 'string' ? body.alias.trim() : '';
+  if (alias.length > 64) return { error: 'The alias is longer than 64 characters' };
+
+  return { value: { displayName, email, points: Math.floor(points), alias } };
+}
+
+// --------------- API: Loyalty members ---------------
+app.get('/api/members', (_req, res) => {
+  res.json({ members, usingDefaults: membersAreDefaults, minCharge: LOYALTY_MIN_CHARGE });
+});
+
+app.post('/api/members', (req, res) => {
+  const { error, value } = validateMemberInput(req.body);
+  if (error) return res.status(400).json({ error });
+  const member = { id: `member-${uuidv4().slice(0, 8)}`, ...value };
+  members.push(member);
+  try {
+    saveMembers();
+    res.json({ member, members });
+  } catch (err) {
+    res.status(500).json({ error: `Could not store the member: ${err.message}` });
+  }
+});
+
+app.put('/api/members/:id', (req, res) => {
+  const member = members.find(m => m.id === req.params.id);
+  if (!member) return res.status(404).json({ error: 'Member not found' });
+  const { error, value } = validateMemberInput(req.body);
+  if (error) return res.status(400).json({ error });
+  Object.assign(member, value);
+  try {
+    saveMembers();
+    res.json({ member, members });
+  } catch (err) {
+    res.status(500).json({ error: `Could not store the member: ${err.message}` });
+  }
+});
+
+app.delete('/api/members/:id', (req, res) => {
+  const index = members.findIndex(m => m.id === req.params.id);
+  if (index < 0) return res.status(404).json({ error: 'Member not found' });
+  members.splice(index, 1);
+  try {
+    saveMembers();
+    res.json({ members });
+  } catch (err) {
+    res.status(500).json({ error: `Could not store the members: ${err.message}` });
+  }
+});
+
+// Throws away the runtime file so the seed data comes back.
+app.post('/api/members/reset', (_req, res) => {
+  try {
+    fs.rmSync(MEMBERS_FILE, { force: true });
+    members = readMembersFile(MEMBERS_DEFAULT_FILE);
+    membersAreDefaults = true;
+    res.json({ members, usingDefaults: true });
+  } catch (err) {
+    res.status(500).json({ error: `Could not restore the default members: ${err.message}` });
+  }
+});
+
+// --------------- API: Loyalty — read the card ---------------
+// A card acquisition asks the terminal for the card's alias without taking any
+// money, which is what makes member lookup before the payment possible. The
+// POITransactionID it returns is then quoted by the payment as
+// CardAcquisitionReference, so the shopper presents the card only once.
+app.post('/api/loyalty/read-card', async (_req, res) => {
+  const poiId = getActivePoiId();
+  if (!poiId) return res.status(400).json({ error: 'No terminal is selected' });
+
+  const header = makeHeader('CardAcquisition');
+  const transactionId = uuidv4();
+  const timestamp = new Date().toISOString();
+
+  const payload = {
+    SaleToPOIRequest: {
+      MessageHeader: header,
+      CardAcquisitionRequest: {
+        SaleData: {
+          SaleTransactionID: { TransactionID: transactionId, TimeStamp: timestamp },
+          // 'Customer' returns an alias that is stable for this card across
+          // transactions, so it can identify a member. 'Transaction' would give a
+          // one-off token that is useless for lookup.
+          TokenRequestedType: 'Customer'
+        },
+        // Deliberately no TotalAmount: this only reads the card, and the basket
+        // total is not known to be final until the member discount is settled.
+        CardAcquisitionTransaction: {}
+      }
+    }
+  };
+
+  try {
+    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
+    const acquisition = data?.SaleToPOIResponse?.CardAcquisitionResponse;
+    const response = acquisition?.Response;
+
+    if (response?.Result !== 'Success') {
+      return res.status(400).json({
+        error: `Card read failed${response?.ErrorCondition ? ` (${response.ErrorCondition})` : ''}`,
+        errorCondition: response?.ErrorCondition || '',
+        adyenResponse: data
+      });
+    }
+
+    const cardData = acquisition?.PaymentInstrumentData?.CardData;
+    // The alias normally arrives as a payment token; some terminals only report it
+    // in the form-encoded AdditionalResponse, so both are checked.
+    let alias = cardData?.PaymentToken?.TokenValue || '';
+    if (!alias) {
+      try { alias = new URLSearchParams(response?.AdditionalResponse || '').get('alias') || ''; } catch { /* not form-encoded */ }
+    }
+
+    const poiTransaction = acquisition?.POIData?.POITransactionID;
+    if (!poiTransaction?.TransactionID) {
+      return res.status(400).json({ error: 'The terminal did not return a card acquisition reference', adyenResponse: data });
+    }
+
+    const member = findMemberByAlias(alias);
+    res.json({
+      alias,
+      maskedPan: cardData?.MaskedPan || '',
+      paymentBrand: cardData?.PaymentBrand || '',
+      cardAcquisition: {
+        transactionId: poiTransaction.TransactionID,
+        timeStamp: poiTransaction.TimeStamp
+      },
+      member: member ? { ...member } : null,
+      adyenResponse: data
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --------------- API: Loyalty — ask the shopper on the terminal ---------------
+// An Input request with GetConfirmation puts a two-button question on the
+// terminal. The last two OutputText lines are the button labels, the ones before
+// them the message, so the member's name and balance are shown by the terminal
+// itself rather than read out loud at the till.
+app.post('/api/loyalty/confirm', async (req, res) => {
+  const { memberId, amount } = req.body;
+  const poiId = getActivePoiId();
+  if (!poiId) return res.status(400).json({ error: 'No terminal is selected' });
+
+  const member = members.find(m => m.id === memberId);
+  if (!member) return res.status(404).json({ error: 'Member not found' });
+
+  const total = Number(amount);
+  if (!Number.isFinite(total) || total <= 0) {
+    return res.status(400).json({ error: 'A basket amount is required' });
+  }
+
+  const discount = redeemableAmount(member.points, total);
+  const header = makeHeader('Input');
+  // Input is a device-level message, not a transaction service.
+  header.MessageClass = 'Device';
+
+  const payload = {
+    SaleToPOIRequest: {
+      MessageHeader: header,
+      InputRequest: {
+        DisplayOutput: {
+          Device: 'CustomerDisplay',
+          InfoQualify: 'Display',
+          OutputContent: {
+            OutputFormat: 'Text',
+            OutputText: [
+              { Text: `Welcome back, ${member.displayName}` },
+              { Text: `Use your credit ${member.points}` },
+              { Text: 'No' },
+              { Text: 'Yes' }
+            ]
+          }
+        },
+        InputData: {
+          Device: 'CustomerInput',
+          InfoQualify: 'Input',
+          InputCommand: 'GetConfirmation',
+          MaxInputTime: 30
+        }
+      }
+    }
+  };
+
+  try {
+    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
+    const inputResponse = data?.SaleToPOIResponse?.InputResponse;
+    const response = inputResponse?.Response;
+
+    if (response?.Result !== 'Success') {
+      return res.status(400).json({
+        error: `The terminal did not answer the question${response?.ErrorCondition ? ` (${response.ErrorCondition})` : ''}`,
+        errorCondition: response?.ErrorCondition || '',
+        adyenResponse: data
+      });
+    }
+
+    const confirmed = inputResponse?.InputResult?.Input?.ConfirmedFlag === true;
+    res.json({
+      confirmed,
+      pointsAvailable: member.points,
+      discount: confirmed ? discount : 0,
+      finalAmount: Math.round((total - (confirmed ? discount : 0)) * 100) / 100,
+      adyenResponse: data
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Points are spent only once the payment is actually paid, so an abandoned or
+// declined transaction leaves the balance untouched. A later refund does not put
+// them back: reverse that by editing the balance in the User data modal.
+function settleLoyalty(order) {
+  const loyalty = order?.loyalty;
+  if (!loyalty || loyalty.applied || loyalty.pointsUsed <= 0) return;
+  if (order.status !== 'paid') return;
+
+  const member = members.find(m => m.id === loyalty.memberId);
+  if (!member) return;
+  member.points = Math.max(0, member.points - loyalty.pointsUsed);
+  loyalty.applied = true;
+  try {
+    saveMembers();
+  } catch (err) {
+    console.warn(`Could not persist the redeemed points: ${err.message}`);
+  }
+}
+
 // --------------- API: Make Payment ---------------
 app.post('/api/payment', async (req, res) => {
-  const { amount, currency, items, useAsync, serviceId: clientServiceId, allowedPaymentBrand, forceEntryMode } = req.body;
+  const {
+    amount, currency, items, useAsync, serviceId: clientServiceId,
+    allowedPaymentBrand, forceEntryMode, cardAcquisitionReference, loyalty
+  } = req.body;
 
   // Restricting the card entry mode is what turns a payment into Manual Key Entry
   // ('Keyed'), where the terminal itself prompts for the card number and expiry.
@@ -974,6 +1297,36 @@ app.post('/api/payment', async (req, res) => {
   const ENTRY_MODES = ['Keyed', 'Contactless', 'ICC', 'MagStripe', 'Manual', 'Tapped', 'RFID', 'Scanned', 'File', 'SynchronousICC'];
   if (forceEntryMode && !ENTRY_MODES.includes(forceEntryMode)) {
     return res.status(400).json({ error: `Unsupported entry mode: ${forceEntryMode}` });
+  }
+
+  // A redemption is re-checked here rather than trusted: the amount the terminal
+  // is asked to authorise has to match the points the balance can actually cover.
+  let redemption = null;
+  if (loyalty && Number(loyalty.pointsUsed) > 0) {
+    const member = members.find(m => m.id === loyalty.memberId);
+    if (!member) return res.status(404).json({ error: 'Member not found' });
+
+    const pointsUsed = Math.floor(Number(loyalty.pointsUsed));
+    const originalAmount = Number(loyalty.originalAmount);
+    if (!Number.isFinite(originalAmount) || originalAmount <= 0) {
+      return res.status(400).json({ error: 'The basket amount before the discount is required' });
+    }
+    if (pointsUsed > member.points) {
+      return res.status(400).json({ error: `${member.displayName} only has ${member.points} points` });
+    }
+    if (pointsUsed > redeemableAmount(member.points, originalAmount)) {
+      return res.status(400).json({ error: 'The discount would leave nothing for the card to pay' });
+    }
+    if (Math.abs((originalAmount - pointsUsed) - Number(amount)) > 0.005) {
+      return res.status(400).json({ error: 'The discounted amount does not match the points redeemed' });
+    }
+    redemption = {
+      memberId: member.id,
+      displayName: member.displayName,
+      pointsUsed,
+      originalAmount: Math.round(originalAmount * 100) / 100,
+      applied: false
+    };
   }
 
   const header = makeHeader('Payment');
@@ -996,7 +1349,8 @@ app.post('/api/payment', async (req, res) => {
     pspReference: null,
     tenderReference: null,
     terminalId: getActivePoiId(),
-    refundedAmount: 0
+    refundedAmount: 0,
+    ...(redemption ? { loyalty: redemption } : {})
   };
   orders.unshift(order);
   broadcastSSE('orderUpdate', order);
@@ -1026,7 +1380,17 @@ app.post('/api/payment', async (req, res) => {
               ...(forceEntryMode ? { ForceEntryMode: [forceEntryMode] } : {})
             }
           } : {})
-        }
+        },
+        // Quoting the card acquisition means the terminal reuses the card the
+        // shopper already presented, instead of asking for it a second time.
+        ...(cardAcquisitionReference?.transactionId ? {
+          PaymentData: {
+            CardAcquisitionReference: {
+              TransactionID: cardAcquisitionReference.transactionId,
+              TimeStamp: cardAcquisitionReference.timeStamp
+            }
+          }
+        } : {})
       }
     }
   };
@@ -1049,6 +1413,7 @@ app.post('/api/payment', async (req, res) => {
       else order.status = 'failed';
     }
     order.response = data;
+    settleLoyalty(order);
 
     const paymentResp = data?.SaleToPOIResponse?.PaymentResponse;
     const poiData = paymentResp?.POIData;
@@ -1564,6 +1929,7 @@ app.post('/api/webhook', (req, res) => {
         if (result === 'Success') order.status = 'paid';
         else if (errCond === 'Aborted' || errCond === 'Cancel') order.status = 'cancelled';
         else order.status = 'failed';
+        settleLoyalty(order);
         if (result !== 'Success') {
           const friendlyMessages = {
             'Busy': 'Terminal busy — another transaction in progress',

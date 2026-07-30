@@ -1,5 +1,5 @@
 {
-  "name": "POS Terminal",
+  "name": "POS System",
   "short_name": "POS",
   "description": "POS Web App with Adyen Terminal Integration",
   "start_url": "/",
