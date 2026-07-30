@@ -1264,7 +1264,8 @@ async function saveMembers() {
     });
     const data = await res.json();
     if (!res.ok) {
-      showToast(data.error || 'Could not save the members', 'error');
+      // Kept longer than a success: this one has to be read to be acted on.
+      showFloatingToast(data.error || 'Could not save the members', 'error', 4000);
       // Highlight the row the server rejected so the message is actionable.
       const rows = $userdataList.querySelectorAll('.userdata-row');
       rows.forEach(r => r.classList.remove('userdata-row-invalid'));
@@ -1276,12 +1277,11 @@ async function saveMembers() {
     }
     _members = (data.members || []).map(m => ({ ...m }));
     renderUserData();
-    // The rows look identical after a save, so flash them to confirm the alias
-    // actually reached the server rather than relying on the toast alone.
-    $userdataList.querySelectorAll('.userdata-row').forEach(r => r.classList.add('userdata-row-saved'));
-    showToast(`${_members.length} member${_members.length === 1 ? '' : 's'} saved`, 'success');
+    // The rows look identical after a save, so confirm it with a popup: the
+    // notification bar behind the modal would not be seen.
+    showFloatingToast(`${_members.length} member${_members.length === 1 ? '' : 's'} saved`, 'success');
   } catch (err) {
-    showToast(`Could not save the members: ${err.message}`, 'error');
+    showFloatingToast(`Could not save the members: ${err.message}`, 'error', 4000);
   } finally {
     $btnUserdataSave.disabled = false;
     $btnUserdataSave.textContent = 'Save';
@@ -1945,6 +1945,23 @@ async function clearOrders() {
 }
 
 // ====================== Toast ======================
+// A short-lived popup for things that happen inside a modal, where the inline
+// notification bar is covered by the overlay.
+function showFloatingToast(msg, type = 'info', duration = 2000) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.textContent = msg;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.classList.add('toast-leaving');
+    // Removed on the animation end rather than a second timer, so the node cannot
+    // be left behind if the animation is skipped.
+    toast.addEventListener('animationend', () => toast.remove(), { once: true });
+  }, duration);
+}
+
 function showToast(msg, type = 'info', duration = 5000) {
   const bar = document.getElementById('notification-bar');
   bar.textContent = msg;
