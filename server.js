@@ -690,6 +690,76 @@ function renderReceiptXhtml(lines, { logoBase64, qrBase64 } = {}) {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<div style="width:${RECEIPT_PRINT_WIDTH_PX}px">${parts.join('')}</div>`;
 }
 
+// Sends one XHTML document to the terminal's printer. The document goes out
+// base64-encoded: sending the raw XML, or base64-encoding it twice, makes the
+// terminal answer Success while printing nothing at all.
+async function sendPrintXhtml(poiId, xhtml) {
+  return adyenRequest('https://terminal-api-test.adyen.com/sync', {
+    SaleToPOIRequest: {
+      MessageHeader: {
+        ProtocolVersion: '3.0',
+        MessageClass: 'Device',
+        MessageCategory: 'Print',
+        MessageType: 'Request',
+        ServiceID: uuidv4().replace(/-/g, '').slice(0, 10),
+        SaleID: process.env.ADYEN_SALE_ID || 'POSWebApp',
+        POIID: poiId
+      },
+      PrintRequest: {
+        PrintOutput: {
+          DocumentQualifier: 'Document',
+          ResponseMode: 'PrintEnd',
+          OutputContent: {
+            OutputFormat: 'XHTML',
+            OutputXHTML: Buffer.from(xhtml, 'utf8').toString('base64')
+          }
+        }
+      }
+    }
+  });
+}
+
+// --------------- API: Print Diagnostics ---------------
+// A print request that returns Success without moving paper means the terminal
+// accepted the message but rendered nothing, which points at the markup rather
+// than at the request. These variants go from the exact shape Adyen documents up
+// to our full receipt, so a few test prints show where rendering stops.
+const PRINT_TEST_VARIANTS = {
+  // Documented shape: bare img element, no wrapper.
+  image: () => `<?xml version="1.0" encoding="UTF-8"?>\n<img src="data:image/png;base64, ${loadReceiptLogo()}" width="240"/>`,
+  // Same image, wrapped in an element.
+  imageInDiv: () => `<?xml version="1.0" encoding="UTF-8"?>\n<div align="center"><img src="data:image/png;base64, ${loadReceiptLogo()}" width="240"/></div>`,
+  // Text only: shows whether the renderer handles anything besides images.
+  text: () => `<?xml version="1.0" encoding="UTF-8"?>\n<div>Plain XHTML text</div>`,
+  // Text with a font size, which is what makes the store name larger.
+  styledText: () => `<?xml version="1.0" encoding="UTF-8"?>\n<div align="center" style="font-size:34px;font-weight:bold">Big Store Name</div>`,
+  // A table, which is how the receipt aligns amounts.
+  table: () => `<?xml version="1.0" encoding="UTF-8"?>\n<table width="100%"><tr><td align="left">Total</td><td align="right">EUR 9.99</td></tr></table>`
+};
+
+app.post('/api/print-test', async (req, res) => {
+  const { variant } = req.body;
+  const build = PRINT_TEST_VARIANTS[variant];
+  if (!build) {
+    return res.status(400).json({ error: `Unknown variant. Use one of: ${Object.keys(PRINT_TEST_VARIANTS).join(', ')}` });
+  }
+  const poiId = getActivePoiId();
+  if (!poiId) return res.status(400).json({ error: 'No terminal is selected' });
+
+  try {
+    const xhtml = build();
+    const data = await sendPrintXhtml(poiId, xhtml);
+    res.json({
+      variant,
+      xhtml: xhtml.replace(/base64, [A-Za-z0-9+/=]+/, 'base64, <IMAGE_DATA>'),
+      result: data?.SaleToPOIResponse?.PrintResponse?.Response?.Result,
+      adyenResponse: data
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --------------- API: Reprint Receipt ---------------
 // Reprints the shopper receipt of an earlier payment on the terminal that took
 // it. ReceiptReprintFlag on a TransactionStatus request does not reliably put
@@ -758,32 +828,7 @@ app.post('/api/reprint-receipt', async (req, res) => {
       qrBase64: qrPng.toString('base64')
     });
 
-    const printPayload = {
-      SaleToPOIRequest: {
-        MessageHeader: {
-          ProtocolVersion: '3.0',
-          MessageClass: 'Device',
-          MessageCategory: 'Print',
-          MessageType: 'Request',
-          ServiceID: uuidv4().replace(/-/g, '').slice(0, 10),
-          SaleID: process.env.ADYEN_SALE_ID || 'POSWebApp',
-          POIID: poiId
-        },
-        PrintRequest: {
-          PrintOutput: {
-            DocumentQualifier: 'Document',
-            ResponseMode: 'PrintEnd',
-            OutputContent: {
-              OutputFormat: 'XHTML',
-              // Adyen expects the whole document base64-encoded, images included.
-              OutputXHTML: Buffer.from(xhtml, 'utf8').toString('base64')
-            }
-          }
-        }
-      }
-    };
-
-    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', printPayload);
+    const data = await sendPrintXhtml(poiId, xhtml);
     const response = data?.SaleToPOIResponse?.PrintResponse?.Response;
     if (response?.Result === 'Success') {
       return res.json({ success: true, adyenResponse: data });
