@@ -459,28 +459,22 @@ html, body {
   position: relative;
   display: flex;
   align-items: stretch;
-  /* Fixed rather than a minimum so the image panel below can take a percentage of
-     it. Two lines of text and a badge sit well inside this. */
-  height: 96px;
+  min-height: 96px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: #fff;
   overflow: hidden;
 }
-/* A faint tint behind the device, which the product shots can sit on because they
-   are transparent. Without it the photo would read as a gap in the card. */
+/* No tint or divider: the product shots are transparent, so anything behind them
+   reads as a panel stuck onto the card rather than part of it. The image simply
+   runs the full height of the card so the device is as large as it can be. */
 .terminal-thumb {
   flex-shrink: 0;
-  width: 80px;
-  height: 60%;
-  align-self: center;
+  width: 84px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6px;
-  background: #f7f7f8;
-  border-right: 1px solid var(--border);
-  border-radius: 0 8px 8px 0;
+  padding: 5px 4px 5px 8px;
   color: var(--text-light);
 }
 /* contain, so a wide countertop unit and a tall handheld both fill as much of the
