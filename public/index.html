@@ -59,6 +59,17 @@
                   <button id="btn-ttp-open" class="btn btn-outline settings-btn"><i data-lucide="smartphone-nfc"></i>Tap to Pay</button>
                   <button id="btn-toggle-log" class="btn btn-outline settings-btn"><i data-lucide="terminal"></i>API log</button>
                 </div>
+                <!-- Receipt logo printed at the top of the receipt -->
+                <div class="settings-group">
+                  <div class="settings-label">Receipt logo</div>
+                  <div class="logo-preview"><img id="logo-preview-img" alt="Receipt logo" /></div>
+                  <div id="logo-meta" class="logo-meta"></div>
+                  <input type="file" id="input-logo-file" accept="image/*" class="hidden" />
+                  <div class="logo-buttons">
+                    <button id="btn-logo-upload" class="btn btn-outline settings-btn"><i data-lucide="image-up"></i>Upload</button>
+                    <button id="btn-logo-reset" class="btn btn-outline settings-btn"><i data-lucide="undo-2"></i>Reset</button>
+                  </div>
+                </div>
                 <!-- Payment Mode -->
                 <div class="settings-group settings-mode">
                   <div class="toggle-row">

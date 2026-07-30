@@ -439,6 +439,43 @@ html, body {
   font-size: clamp(.58rem, 1vw, .74rem) !important;
   border-radius: 10px !important;
 }
+/* Receipt logo */
+.logo-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Chequerboard: the logo is black on transparent, so a plain white tile would
+     hide where the image actually ends. */
+  background:
+    linear-gradient(45deg, #eef1f4 25%, transparent 25%, transparent 75%, #eef1f4 75%) 0 0 / 12px 12px,
+    linear-gradient(45deg, #eef1f4 25%, transparent 25%, transparent 75%, #eef1f4 75%) 6px 6px / 12px 12px,
+    #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  min-height: 48px;
+  margin-bottom: 6px;
+}
+.logo-preview img {
+  max-width: 100%;
+  /* The receipt is 384 px wide, so preview at the same aspect without letting a
+     tall logo push the rest of the panel off screen. */
+  max-height: 90px;
+  object-fit: contain;
+}
+.logo-preview img:not([src]) { display: none; }
+.logo-meta {
+  font-size: .66rem;
+  color: var(--muted);
+  font-family: 'SF Mono', ui-monospace, monospace;
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+.logo-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(6px, 0.8vw, 10px);
+}
 .settings-mode {
   margin-bottom: clamp(6px, 1vw, 12px);
 }

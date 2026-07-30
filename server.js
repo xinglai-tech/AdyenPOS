@@ -82,7 +82,9 @@ function clientIp(req) {
 }
 
 // --------------- Middleware ---------------
-app.use(express.json());
+// The default 100 KB limit is too small for an uploaded receipt logo, which
+// arrives as a base64 data URL.
+app.use(express.json({ limit: '1mb' }));
 app.set('trust proxy', true);
 
 // --------------- Auth: stateless signed cookie ---------------
@@ -518,38 +520,64 @@ app.post('/api/transaction-status', async (req, res) => {
 // single OutputFormat and, as test prints on the S1F2L showed, its XHTML renderer
 // only draws a document whose root element is a bare <img/>. A wrapping element,
 // text and tables all print nothing while still answering Success. So:
-//   1. XHTML  - the header image (store name and logo)
+//   1. XHTML  - the logo image
 //   2. Text   - the payment details
 //   3. BarCode - the QR code
 
 // Characters per line on the printer, used to right-align values against labels.
 const RECEIPT_PRINT_WIDTH = parseInt(process.env.RECEIPT_PRINT_WIDTH || '32', 10);
 
-// Printed width of the header image, in pixels of the 384 px wide print head.
-const RECEIPT_LOGO_PRINT_WIDTH = 360;
-
-// Text output has no font size control, so the large store name is baked into the
-// header image. This name is only printed as text when that image is missing;
-// after changing it, rerun assets/make-receipt-logo.py.
-const RECEIPT_STORE_NAME = process.env.RECEIPT_STORE_NAME || 'My Super Store';
-
 // Scanned by the shopper, printed at the very bottom of the receipt.
 const RECEIPT_QR_URL = process.env.RECEIPT_QR_URL || 'https://adyen.com.cn';
 
-// 1-bit black and white PNG: the print head can only burn or not burn a dot, so
-// grayscale or colour artwork comes out dithered and muddy.
+// A PNG uploaded through the app wins over the bundled Adyen logo. It lives next
+// to it on disk, so on Azure it survives restarts but not a redeploy.
 const RECEIPT_LOGO_FILE = path.join(__dirname, 'assets', 'receipt-logo.png');
-let _logoBase64;
+const RECEIPT_LOGO_CUSTOM_FILE = path.join(__dirname, 'assets', 'receipt-logo-custom.png');
+
+// Adyen caps a printed image at 256000 bytes. Stay clear of it: the PNG travels
+// inside the base64-encoded XHTML document, which inflates it by a third.
+const RECEIPT_LOGO_MAX_BYTES = 180000;
+
+// Widest the print head can render. An image wider than this is rejected rather
+// than scaled, because scaling a 1-bit image server-side needs an image library.
+const RECEIPT_LOGO_MAX_WIDTH = 384;
+const RECEIPT_LOGO_MAX_HEIGHT = 600;
+
+// Reads width and height out of a PNG's IHDR chunk, which always comes first and
+// at a fixed offset, and doubles as a check that this really is a PNG.
+function readPngSize(buffer) {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (buffer.length < 24 || !buffer.subarray(0, 8).equals(signature)) return null;
+  if (buffer.subarray(12, 16).toString('ascii') !== 'IHDR') return null;
+  return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+}
+
+// The logo the receipt is currently printed with, or null if neither file is
+// readable. Cached, because it is read on every print.
+let _logo;
 function loadReceiptLogo() {
-  if (_logoBase64 === undefined) {
-    try {
-      _logoBase64 = fs.readFileSync(RECEIPT_LOGO_FILE).toString('base64');
-    } catch (err) {
-      console.warn(`Receipt logo not printed: ${err.message}`);
-      _logoBase64 = null;
+  if (_logo === undefined) {
+    _logo = null;
+    for (const file of [RECEIPT_LOGO_CUSTOM_FILE, RECEIPT_LOGO_FILE]) {
+      try {
+        const buffer = fs.readFileSync(file);
+        const size = readPngSize(buffer);
+        if (!size) continue;
+        _logo = {
+          base64: buffer.toString('base64'),
+          bytes: buffer.length,
+          custom: file === RECEIPT_LOGO_CUSTOM_FILE,
+          ...size
+        };
+        break;
+      } catch {
+        // Missing or unreadable: fall through to the next candidate.
+      }
     }
+    if (!_logo) console.warn('No receipt logo available; receipts print without one');
   }
-  return _logoBase64;
+  return _logo;
 }
 
 // Technical card and acquirer details that Adyen puts on the receipt but that are
@@ -619,7 +647,8 @@ function buildReceiptLines(items, insertions = {}) {
 }
 
 // Removing fields leaves the surrounding "filler" separators stacked up, so drop
-// leading and repeated blank lines to keep the printout tight.
+// leading, trailing and repeated blank lines to keep the printout tight. Trailing
+// ones matter most: they push the QR code that follows down the paper.
 function collapseBlankLines(lines) {
   const out = [];
   for (const line of lines) {
@@ -627,6 +656,7 @@ function collapseBlankLines(lines) {
     if (isBlank && (out.length === 0 || out[out.length - 1].type === 'blank')) continue;
     out.push(line);
   }
+  while (out.length > 0 && out[out.length - 1].type === 'blank') out.pop();
   return out;
 }
 
@@ -677,9 +707,10 @@ function renderReceiptText(lines) {
 
 // The one XHTML shape this terminal renders: a bare <img/> root, no wrapper. The
 // space after "base64," is required by Adyen.
-function renderLogoXhtml(logoBase64) {
+function renderLogoXhtml(logo) {
+  const width = Math.min(logo.width, RECEIPT_LOGO_MAX_WIDTH);
   return '<?xml version="1.0" encoding="UTF-8"?>\n'
-    + `<img src="data:image/png;base64, ${logoBase64}" width="${RECEIPT_LOGO_PRINT_WIDTH}"/>`;
+    + `<img src="data:image/png;base64, ${logo.base64}" width="${width}"/>`;
 }
 
 // One print request. A request carries a single OutputFormat, so text, XHTML and
@@ -706,6 +737,75 @@ async function sendPrintContent(poiId, outputContent, documentQualifier = 'Docum
     }
   });
 }
+
+// --------------- API: Receipt Logo ---------------
+function describeLogo(logo) {
+  if (!logo) return { present: false, custom: false };
+  return {
+    present: true,
+    custom: logo.custom,
+    width: logo.width,
+    height: logo.height,
+    bytes: logo.bytes,
+    dataUrl: `data:image/png;base64,${logo.base64}`
+  };
+}
+
+app.get('/api/receipt-logo', (_req, res) => {
+  res.json({
+    ...describeLogo(loadReceiptLogo()),
+    limits: {
+      maxWidth: RECEIPT_LOGO_MAX_WIDTH,
+      maxHeight: RECEIPT_LOGO_MAX_HEIGHT,
+      maxBytes: RECEIPT_LOGO_MAX_BYTES
+    }
+  });
+});
+
+// Takes a PNG data URL. The browser already downscales and thresholds the picked
+// file; these checks are the guard that whatever arrives can actually be printed.
+app.post('/api/receipt-logo', (req, res) => {
+  const { dataUrl } = req.body;
+  const base64 = typeof dataUrl === 'string' ? dataUrl.replace(/^data:image\/png;base64,/, '') : '';
+  if (!base64 || base64 === dataUrl) {
+    return res.status(400).json({ error: 'Expected a PNG data URL' });
+  }
+
+  const buffer = Buffer.from(base64, 'base64');
+  const size = readPngSize(buffer);
+  if (!size) {
+    return res.status(400).json({ error: 'The uploaded file is not a valid PNG image' });
+  }
+  if (buffer.length > RECEIPT_LOGO_MAX_BYTES) {
+    return res.status(400).json({
+      error: `The image is ${Math.round(buffer.length / 1024)} KB, over the ${Math.round(RECEIPT_LOGO_MAX_BYTES / 1024)} KB the terminal accepts`
+    });
+  }
+  if (size.width > RECEIPT_LOGO_MAX_WIDTH || size.height > RECEIPT_LOGO_MAX_HEIGHT) {
+    return res.status(400).json({
+      error: `The image is ${size.width}x${size.height} px, over the ${RECEIPT_LOGO_MAX_WIDTH}x${RECEIPT_LOGO_MAX_HEIGHT} px the printer can render`
+    });
+  }
+
+  try {
+    fs.writeFileSync(RECEIPT_LOGO_CUSTOM_FILE, buffer);
+    _logo = undefined;
+    res.json(describeLogo(loadReceiptLogo()));
+  } catch (err) {
+    res.status(500).json({ error: `Could not store the logo: ${err.message}` });
+  }
+});
+
+// Removing the uploaded file falls back to the bundled Adyen logo.
+app.delete('/api/receipt-logo', (_req, res) => {
+  try {
+    fs.rmSync(RECEIPT_LOGO_CUSTOM_FILE, { force: true });
+    _logo = undefined;
+    res.json(describeLogo(loadReceiptLogo()));
+  } catch (err) {
+    res.status(500).json({ error: `Could not remove the logo: ${err.message}` });
+  }
+});
 
 // --------------- API: Reprint Receipt ---------------
 // Reprints the shopper receipt of an earlier payment on the terminal that took
@@ -767,13 +867,6 @@ app.post('/api/reprint-receipt', async (req, res) => {
       totalAmount: buildItemLines(order)
     }));
 
-    const logoBase64 = loadReceiptLogo();
-    // Without the header image the store name has to be printed as plain text.
-    if (!logoBase64) {
-      lines.unshift({ type: 'centred', text: RECEIPT_STORE_NAME, bold: true }, { type: 'blank' });
-    }
-    lines.push({ type: 'blank' }, { type: 'centred', text: 'Scan to visit us' });
-
     // The paper does not advance between requests, so these three print as one
     // continuous receipt in the order they are sent.
     const steps = [];
@@ -784,10 +877,11 @@ app.post('/api/reprint-receipt', async (req, res) => {
       return response?.Result === 'Success';
     };
 
-    if (logoBase64) {
-      await runStep('header', {
+    const logo = loadReceiptLogo();
+    if (logo) {
+      await runStep('logo', {
         OutputFormat: 'XHTML',
-        OutputXHTML: Buffer.from(renderLogoXhtml(logoBase64), 'utf8').toString('base64')
+        OutputXHTML: Buffer.from(renderLogoXhtml(logo), 'utf8').toString('base64')
       });
     }
     const detailsOk = await runStep('details', {

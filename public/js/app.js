@@ -143,6 +143,11 @@ const $btnClearResp    = document.getElementById('btn-clear-response');
 const $btnToggleLog    = document.getElementById('btn-toggle-log');
 const $rightCol        = document.getElementById('right-col');
 const $btnLogout       = document.getElementById('btn-logout');
+const $logoPreviewImg  = document.getElementById('logo-preview-img');
+const $logoMeta        = document.getElementById('logo-meta');
+const $inputLogoFile   = document.getElementById('input-logo-file');
+const $btnLogoUpload   = document.getElementById('btn-logo-upload');
+const $btnLogoReset    = document.getElementById('btn-logo-reset');
 
 // Terminal display
 const $terminalDisplay = document.getElementById('terminal-display-content');
@@ -181,6 +186,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('terminal-display').style.display = state.isAsync ? '' : 'none';
   setupSSE();
   bindEvents();
+  loadReceiptLogo();
   refreshIcons();
   initTapToPay();
   await handleTtpReturn();
@@ -691,6 +697,120 @@ async function deleteTerminal(poiId) {
     }
   } catch (err) {
     showToast(`Delete failed: ${err.message}`, 'error');
+  }
+}
+
+// ====================== Receipt Logo ======================
+// The print head is 384 dots wide and can only burn or not burn each dot, so a
+// picked file is downscaled and reduced to pure black and white in the browser
+// before it is uploaded. That keeps it well inside the size the terminal accepts
+// and shows the shopper-facing result in the preview.
+const LOGO_MAX_WIDTH = 384;
+const LOGO_MAX_HEIGHT = 600;
+const LOGO_MAX_FILE_BYTES = 10 * 1024 * 1024;
+const LOGO_THRESHOLD = 150;
+
+function toMonochromePng(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, LOGO_MAX_WIDTH / img.naturalWidth, LOGO_MAX_HEIGHT / img.naturalHeight);
+      const width = Math.max(1, Math.round(img.naturalWidth * scale));
+      const height = Math.max(1, Math.round(img.naturalHeight * scale));
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      // Flatten onto white first: dropping alpha would otherwise turn transparent
+      // areas black and print a solid block.
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
+
+      const image = ctx.getImageData(0, 0, width, height);
+      const px = image.data;
+      for (let i = 0; i < px.length; i += 4) {
+        const luma = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+        const value = luma < LOGO_THRESHOLD ? 0 : 255;
+        px[i] = px[i + 1] = px[i + 2] = value;
+        px[i + 3] = 255;
+      }
+      ctx.putImageData(image, 0, 0);
+      resolve({ dataUrl: canvas.toDataURL('image/png'), width, height });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('That file could not be read as an image'));
+    };
+    img.src = url;
+  });
+}
+
+function renderLogoPreview(data) {
+  if (!data || !data.present) {
+    $logoPreviewImg.removeAttribute('src');
+    $logoMeta.textContent = 'No logo: receipts print without one';
+    return;
+  }
+  $logoPreviewImg.src = data.dataUrl;
+  $logoMeta.textContent = `${data.width}x${data.height} px · ${(data.bytes / 1024).toFixed(1)} KB · ${data.custom ? 'uploaded' : 'default'}`;
+}
+
+async function loadReceiptLogo() {
+  try {
+    const res = await fetch('/api/receipt-logo');
+    renderLogoPreview(await res.json());
+  } catch (err) {
+    $logoMeta.textContent = `Could not load the logo: ${err.message}`;
+  }
+}
+
+async function uploadReceiptLogo(file) {
+  if (!file) return;
+  if (file.size > LOGO_MAX_FILE_BYTES) {
+    showToast(`That file is ${(file.size / 1024 / 1024).toFixed(1)} MB; pick one under 10 MB`, 'error');
+    return;
+  }
+  $btnLogoUpload.disabled = true;
+  try {
+    const { dataUrl, width, height } = await toMonochromePng(file);
+    const res = await fetch('/api/receipt-logo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataUrl })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || 'Upload failed', 'error');
+      return;
+    }
+    renderLogoPreview(data);
+    showToast(`Logo updated (${width}x${height} px)`, 'success');
+  } catch (err) {
+    showToast(`Upload failed: ${err.message}`, 'error');
+  } finally {
+    $btnLogoUpload.disabled = false;
+  }
+}
+
+async function resetReceiptLogo() {
+  $btnLogoReset.disabled = true;
+  try {
+    const res = await fetch('/api/receipt-logo', { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || 'Reset failed', 'error');
+      return;
+    }
+    renderLogoPreview(data);
+    showToast('Back to the default logo', 'info');
+  } catch (err) {
+    showToast(`Reset failed: ${err.message}`, 'error');
+  } finally {
+    $btnLogoReset.disabled = false;
   }
 }
 
@@ -1353,6 +1473,13 @@ function bindEvents() {
     btn.addEventListener('click', () => processPayment(btn.dataset.brand || ''));
   });
   document.getElementById('btn-clear-display').addEventListener('click', clearTerminalDisplay);
+  $btnLogoUpload.addEventListener('click', () => $inputLogoFile.click());
+  $btnLogoReset.addEventListener('click', resetReceiptLogo);
+  $inputLogoFile.addEventListener('change', async (e) => {
+    await uploadReceiptLogo(e.target.files[0]);
+    // Clear the value so picking the same file again still fires a change event.
+    e.target.value = '';
+  });
   $btnClearOrders.addEventListener('click', clearOrders);
   $orderSearch.addEventListener('input', () => renderOrders());
   $btnClearResp.addEventListener('click', () => { $apiResponse.innerHTML = '<span class="log-empty">No response yet</span>'; });

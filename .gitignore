@@ -1,5 +1,8 @@
 node_modules/
 .env
 
+# Receipt logo uploaded at runtime; assets/receipt-logo.png is the default.
+assets/receipt-logo-custom.png
+
 .DS_Store
 **/.DS_Store

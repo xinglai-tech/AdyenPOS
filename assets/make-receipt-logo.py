@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Regenerates the receipt header image.
+"""Regenerates the default receipt logo.
 
 The S1F2L only renders an XHTML print document when its root element is a bare
-<img/>: a wrapping <div>, plain text and tables all print nothing. Text output
-has no font size control either, so the large store name is baked into this
-image together with the logo.
+<img/>: a wrapping <div>, plain text and tables all print nothing. So the logo
+has to be an image, and a 1-bit black and white one, because the print head can
+only burn or not burn a dot.
 
-Run after changing RECEIPT_STORE_NAME:
+A logo uploaded through the app takes precedence over this file.
+
     python3 assets/make-receipt-logo.py
 """
 from PIL import Image, ImageDraw, ImageFont
 
 FONT = "/System/Library/Fonts/Avenir Next.ttc"
-BOLD, DEMI = 0, 2
+BOLD = 0
 
-STORE_NAME = "My Super Store"
 LOGO_TEXT = "Adyen"
 CANVAS_W = 360          # print head is 384 px; leave a margin either side
 OUT = "assets/receipt-logo.png"
@@ -30,19 +30,9 @@ def fit(text, target_w, index):
         size += 2
 
 
-def draw_centred(draw, y, text, font, fill):
-    box = font.getbbox(text)
-    draw.text(((CANVAS_W - box[2] - box[0]) / 2, y - box[1]), text, font=font, fill=fill)
-    return box[3] - box[1]
-
-
 canvas = Image.new("L", (CANVAS_W, 400), 255)
 d = ImageDraw.Draw(canvas)
-y = 4
-
-# Store name, as large as the paper allows.
-name_font = fit(STORE_NAME, CANVAS_W - 24, DEMI)
-y += draw_centred(d, y, STORE_NAME, name_font, 0) + 22
+y = 8
 
 # Logo badge: white wordmark knocked out of a black rounded rectangle, with an
 # outer keyline. Both effects are pure black and white, which is all a thermal
