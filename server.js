@@ -690,10 +690,9 @@ function renderReceiptXhtml(lines, { logoBase64, qrBase64 } = {}) {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<div style="width:${RECEIPT_PRINT_WIDTH_PX}px">${parts.join('')}</div>`;
 }
 
-// Sends one XHTML document to the terminal's printer. The document goes out
-// base64-encoded: sending the raw XML, or base64-encoding it twice, makes the
-// terminal answer Success while printing nothing at all.
-async function sendPrintXhtml(poiId, xhtml) {
+// One print request. A request carries a single OutputFormat, so text, XHTML and
+// barcode content cannot be combined in one message.
+async function sendPrintContent(poiId, outputContent, documentQualifier = 'Document') {
   return adyenRequest('https://terminal-api-test.adyen.com/sync', {
     SaleToPOIRequest: {
       MessageHeader: {
@@ -707,15 +706,22 @@ async function sendPrintXhtml(poiId, xhtml) {
       },
       PrintRequest: {
         PrintOutput: {
-          DocumentQualifier: 'Document',
+          DocumentQualifier: documentQualifier,
           ResponseMode: 'PrintEnd',
-          OutputContent: {
-            OutputFormat: 'XHTML',
-            OutputXHTML: Buffer.from(xhtml, 'utf8').toString('base64')
-          }
+          OutputContent: outputContent
         }
       }
     }
+  });
+}
+
+// Sends one XHTML document to the terminal's printer. The document goes out
+// base64-encoded: sending the raw XML, or base64-encoding it twice, makes the
+// terminal answer Success while printing nothing at all.
+async function sendPrintXhtml(poiId, xhtml) {
+  return sendPrintContent(poiId, {
+    OutputFormat: 'XHTML',
+    OutputXHTML: Buffer.from(xhtml, 'utf8').toString('base64')
   });
 }
 
@@ -740,19 +746,44 @@ const PRINT_TEST_VARIANTS = {
 app.post('/api/print-test', async (req, res) => {
   const { variant } = req.body;
   const build = PRINT_TEST_VARIANTS[variant];
-  if (!build) {
-    return res.status(400).json({ error: `Unknown variant. Use one of: ${Object.keys(PRINT_TEST_VARIANTS).join(', ')}` });
+  if (!build && variant !== 'controlText' && variant !== 'controlQr') {
+    return res.status(400).json({
+      error: `Unknown variant. Use one of: controlText, controlQr, ${Object.keys(PRINT_TEST_VARIANTS).join(', ')}`
+    });
   }
   const poiId = getActivePoiId();
   if (!poiId) return res.status(400).json({ error: 'No terminal is selected' });
 
   try {
+    // Controls that use formats other than XHTML: if these print and none of the
+    // XHTML variants do, the terminal does not render XHTML at all.
+    if (variant === 'controlText' || variant === 'controlQr') {
+      const outputContent = variant === 'controlText'
+        ? { OutputFormat: 'Text', OutputText: [{ Text: 'Plain Text format works', Alignment: 'Centred', EndOfLineFlag: true }] }
+        : { OutputFormat: 'BarCode', OutputBarcode: { BarcodeType: 'QRCode', BarcodeValue: RECEIPT_QR_URL } };
+      const controlData = await sendPrintContent(poiId, outputContent, variant === 'controlQr' ? 'CustomerReceipt' : 'Document');
+      const controlResponse = controlData?.SaleToPOIResponse?.PrintResponse?.Response;
+      return res.json({
+        variant,
+        poiId,
+        result: controlResponse?.Result,
+        errorCondition: controlResponse?.ErrorCondition,
+        additionalResponse: controlResponse?.AdditionalResponse,
+        adyenResponse: controlData
+      });
+    }
+
     const xhtml = build();
     const data = await sendPrintXhtml(poiId, xhtml);
+    const response = data?.SaleToPOIResponse?.PrintResponse?.Response;
     res.json({
       variant,
+      poiId,
+      base64Length: Buffer.from(xhtml, 'utf8').toString('base64').length,
       xhtml: xhtml.replace(/base64, [A-Za-z0-9+/=]+/, 'base64, <IMAGE_DATA>'),
-      result: data?.SaleToPOIResponse?.PrintResponse?.Response?.Result,
+      result: response?.Result,
+      errorCondition: response?.ErrorCondition,
+      additionalResponse: response?.AdditionalResponse,
       adyenResponse: data
     });
   } catch (err) {
