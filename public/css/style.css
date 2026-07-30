@@ -556,8 +556,10 @@ html, body {
 .receipt-section:last-of-type {
   margin-bottom: 0;
 }
-.receipt-hint {
-  font-size: .56rem;
+/* Qualified with .overlay-content so it outranks the generic `.overlay-content p`
+   rule further down the file, which would otherwise force these hints to .88rem. */
+.overlay-content .receipt-hint {
+  font-size: .7rem;
   color: var(--text-light);
   line-height: 1.5;
   margin: 0 0 8px;
