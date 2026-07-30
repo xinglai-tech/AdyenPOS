@@ -543,6 +543,15 @@ html, body {
   padding: 8px 10px;
 }
 .userdata-row-invalid { border-color: var(--danger); }
+/* Confirms a save landed: the rows are otherwise unchanged by it. */
+@keyframes userdata-saved-flash {
+  from { background: rgba(52,199,89,.18); border-color: var(--success); }
+  to   { background: transparent; border-color: var(--border); }
+}
+.userdata-row-saved { animation: userdata-saved-flash 1.1s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .userdata-row-saved { animation: none; }
+}
 .userdata-row-head {
   display: flex;
   align-items: center;

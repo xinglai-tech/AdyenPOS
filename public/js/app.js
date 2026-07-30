@@ -281,9 +281,9 @@ function setupSSE() {
     if (state.pendingServiceId && order.serviceId === state.pendingServiceId && order.status !== 'pending') {
       const success = order.status === 'paid';
       const msg = success ? 'Payment successful' : `Payment ${order.status}`;
+      // showOverlayResult schedules its own close, so no timer is needed here.
       showOverlayResult(success, msg);
       state.pendingServiceId = null;
-      setTimeout(hideOverlay, 1800);
     }
   });
 
@@ -1255,6 +1255,7 @@ function addMember() {
 
 async function saveMembers() {
   $btnUserdataSave.disabled = true;
+  $btnUserdataSave.textContent = 'Saving...';
   try {
     const res = await fetch('/api/members', {
       method: 'PUT',
@@ -1275,11 +1276,15 @@ async function saveMembers() {
     }
     _members = (data.members || []).map(m => ({ ...m }));
     renderUserData();
+    // The rows look identical after a save, so flash them to confirm the alias
+    // actually reached the server rather than relying on the toast alone.
+    $userdataList.querySelectorAll('.userdata-row').forEach(r => r.classList.add('userdata-row-saved'));
     showToast(`${_members.length} member${_members.length === 1 ? '' : 's'} saved`, 'success');
   } catch (err) {
     showToast(`Could not save the members: ${err.message}`, 'error');
   } finally {
     $btnUserdataSave.disabled = false;
+    $btnUserdataSave.textContent = 'Save';
   }
 }
 
@@ -1816,7 +1821,11 @@ async function executeRefund() {
 }
 
 // ====================== Overlay helpers ======================
+// Tracked so a new payment cannot be closed by the previous one's timer.
+let _overlayHideTimer = null;
+
 function showOverlay(amount, currency) {
+  clearTimeout(_overlayHideTimer);
   const cur = currency || state.config.currency || 'EUR';
   $overlaySpinner.classList.remove('hidden');
   $overlayTitle.textContent = 'Processing Payment';
@@ -1834,6 +1843,7 @@ function showOverlay(amount, currency) {
 }
 
 function showOverlayResult(success, message) {
+  clearTimeout(_overlayHideTimer);
   $overlaySpinner.classList.add('hidden');
   $overlayTitle.textContent = success ? 'Payment Complete' : 'Payment Not Completed';
   $overlayMsg.textContent = '';
@@ -1843,9 +1853,15 @@ function showOverlayResult(success, message) {
   $btnCheckStatus.classList.add('hidden');
   $btnCancelPay.classList.add('hidden');
   $btnCloseOverlay.classList.remove('hidden');
+
+  // A success has nothing left to read, so it clears itself and hands the till
+  // back. A failure stays up until it is dismissed, because the reason on screen
+  // is the only thing telling the cashier what to do next.
+  if (success) _overlayHideTimer = setTimeout(hideOverlay, 2500);
 }
 
 function hideOverlay() {
+  clearTimeout(_overlayHideTimer);
   $overlay.classList.add('hidden');
 }
 

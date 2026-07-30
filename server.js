@@ -1298,7 +1298,7 @@ app.post('/api/loyalty/confirm', async (req, res) => {
             // display, so the detail goes in the body instead.
             OutputText: [
               { Text: 'Welcome back' },
-              { Text: `${member.displayName}\nRedeem ${discount} of ${member.points} points?\nYou pay ${cur} ${payable.toFixed(2)}` },
+              { Text: `Our VIP ${member.displayName}\nRedeem ${discount} of ${member.points} points?\nYou pay ${cur} ${payable.toFixed(2)}` },
               { Text: 'No' },
               { Text: 'Yes' }
             ]
