@@ -1124,6 +1124,13 @@ app.post('/api/loyalty/read-card', async (req, res) => {
   const transactionId = uuidv4();
   const timestamp = new Date().toISOString();
 
+  // The amount is what allows a contactless card to be processed during the
+  // acquisition. Without it the shopper has to tap a second time for the payment,
+  // however the discount is settled. It is an opening figure, not a commitment:
+  // the payment carries the final amount once the points are applied.
+  const total = Number(req.body?.amount);
+  const hasTotal = Number.isFinite(total) && total > 0;
+
   const payload = {
     SaleToPOIRequest: {
       MessageHeader: header,
@@ -1135,9 +1142,11 @@ app.post('/api/loyalty/read-card', async (req, res) => {
           // one-off token that is useless for lookup.
           TokenRequestedType: 'Customer'
         },
-        // Deliberately no TotalAmount: this only reads the card, and the basket
-        // total is not known to be final until the member discount is settled.
-        CardAcquisitionTransaction: {}
+        CardAcquisitionTransaction: {
+          ...(hasTotal ? { TotalAmount: total } : {}),
+          // Declares that a payment follows, rather than an unreferenced refund.
+          PaymentType: 'Normal'
+        }
       }
     }
   };

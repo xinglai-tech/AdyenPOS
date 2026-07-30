@@ -1057,7 +1057,9 @@ async function loyaltyReadCard() {
     const res = await fetch('/api/loyalty/read-card', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ serviceId: _loyalty.serviceId })
+      // The amount lets the terminal process a contactless card during the read,
+      // which is what avoids asking the shopper to tap again for the payment.
+      body: JSON.stringify({ serviceId: _loyalty.serviceId, amount: _loyalty.amount })
     });
     const data = await res.json();
     _loyalty.reading = false;
