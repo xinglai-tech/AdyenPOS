@@ -456,26 +456,35 @@ html, body {
 .terminal-option-tick { width: 13px; flex-shrink: 0; opacity: 0; }
 .terminal-option.selected .terminal-option-tick { opacity: 1; }
 .terminal-card {
+  position: relative;
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px;
+  align-items: stretch;
+  min-height: 96px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: #fff;
+  /* No padding of its own: the image panel runs to the card border, and the corners
+     are clipped so it follows the same radius. */
+  overflow: hidden;
 }
+/* A faint tint behind the device, which the product shots can sit on because they
+   are transparent. Without it the photo would read as a gap in the card. */
 .terminal-thumb {
   flex-shrink: 0;
-  width: 40px;
-  height: 54px;
+  width: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  background: #f7f7f8;
+  border-right: 1px solid var(--border);
   color: var(--text-light);
 }
-.terminal-thumb svg { width: 100%; height: 100%; display: block; }
-/* contain, so the taller countertop units and the small readers both sit inside the
-   same box without being cropped or stretched. */
-.terminal-thumb img {
-  width: 100%;
-  height: 100%;
+/* contain, so a wide countertop unit and a tall handheld both fill as much of the
+   panel as their shape allows without being cropped or stretched. */
+.terminal-thumb img, .terminal-thumb svg {
+  max-width: 100%;
+  max-height: 100%;
   display: block;
   object-fit: contain;
 }
@@ -484,7 +493,9 @@ html, body {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 32px 10px 14px;
 }
 .terminal-model-row {
   display: flex;
@@ -520,13 +531,16 @@ html, body {
 .terminal-status-dot.online { color: #1a7f37; background: rgba(52,199,89,.14); }
 .terminal-status-dot.offline { color: #c22b22; background: rgba(255,59,48,.12); }
 .terminal-delete-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
   background: none;
   border: none;
   cursor: pointer;
   color: var(--muted);
   font-size: .7rem;
-  padding: 2px 4px;
-  border-radius: 4px;
+  padding: 3px 5px;
+  border-radius: 5px;
   flex-shrink: 0;
   transition: all .15s;
 }
