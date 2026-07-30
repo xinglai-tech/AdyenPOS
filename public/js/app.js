@@ -162,6 +162,7 @@ const $btnLoyaltyOpen  = document.getElementById('btn-loyalty-open');
 const $btnLoyaltyClose = document.getElementById('btn-loyalty-close');
 const $btnLoyaltyRead  = document.getElementById('btn-loyalty-read');
 const $btnLoyaltyPay   = document.getElementById('btn-loyalty-pay');
+const $btnLoyaltyCancel = document.getElementById('btn-loyalty-cancel');
 const $btnLoyaltyCopy  = document.getElementById('btn-loyalty-copy');
 const $loyaltyBasket   = document.getElementById('loyalty-basket');
 const $loyaltySteps    = document.getElementById('loyalty-steps');
@@ -171,7 +172,7 @@ const $userdataModal   = document.getElementById('userdata-modal');
 const $btnUserdataOpen = document.getElementById('btn-userdata-open');
 const $btnUserdataClose = document.getElementById('btn-userdata-close');
 const $btnUserdataAdd  = document.getElementById('btn-userdata-add');
-const $btnUserdataReset = document.getElementById('btn-userdata-reset');
+const $btnUserdataSave = document.getElementById('btn-userdata-save');
 const $userdataList    = document.getElementById('userdata-list');
 
 // Terminal display
@@ -911,18 +912,30 @@ async function resetReceiptLogo() {
 const _loyalty = {
   cardAcquisition: null,
   member: null,
-  amount: 0
+  amount: 0,
+  // ServiceID of the card acquisition, needed to abort it while it is still
+  // waiting for the card.
+  serviceId: null,
+  reading: false,
+  // True once the card has been read and the terminal is holding the card data,
+  // waiting for a payment to quote it. Until that is consumed or released, the
+  // terminal is stuck on 'One moment' and unusable for anything else.
+  holding: false
 };
 
 function loyaltyReset() {
   _loyalty.cardAcquisition = null;
   _loyalty.member = null;
   _loyalty.amount = 0;
+  _loyalty.serviceId = null;
+  _loyalty.reading = false;
+  _loyalty.holding = false;
   $loyaltySteps.innerHTML = '';
   $loyaltySteps.classList.add('hidden');
   $loyaltyAliasRow.classList.add('hidden');
   $loyaltyAlias.value = '';
   $btnLoyaltyPay.classList.add('hidden');
+  $btnLoyaltyCancel.classList.add('hidden');
 }
 
 function loyaltyStep(text, tone = 'info') {
@@ -948,8 +961,68 @@ function openLoyaltyModal() {
   refreshIcons();
 }
 
-function closeLoyaltyModal() {
+// Closing the panel must not strand the terminal: if a read is still running it is
+// aborted, and if the card data is already being held it is released.
+async function closeLoyaltyModal() {
+  if (_loyalty.reading) {
+    await loyaltyAbortRead();
+    return;
+  }
+  if (_loyalty.holding) {
+    await loyaltyRelease();
+  }
   $loyaltyModal.classList.add('hidden');
+}
+
+// Stops a read while the terminal is still asking for the card.
+async function loyaltyAbortRead() {
+  if (!_loyalty.serviceId) return;
+  $btnLoyaltyCancel.disabled = true;
+  try {
+    const res = await fetch('/api/loyalty/abort', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serviceId: _loyalty.serviceId })
+    });
+    const data = await res.json();
+    showApiResponse('Abort (CardAcquisition)', data.adyenResponse || data);
+    if (!res.ok) {
+      loyaltyStep(data.error || 'Could not cancel the card read', 'error');
+      return;
+    }
+    // The pending read-card call now returns Failure / Aborted and reports it.
+    loyaltyStep('Cancel sent to the terminal', 'warning');
+  } catch (err) {
+    loyaltyStep(`Could not cancel the card read: ${err.message}`, 'error');
+  } finally {
+    $btnLoyaltyCancel.disabled = false;
+  }
+}
+
+// Hands the held card data back so the terminal leaves 'One moment' and goes idle.
+async function loyaltyRelease() {
+  $btnLoyaltyClose.disabled = true;
+  try {
+    const res = await fetch('/api/loyalty/release', { method: 'POST' });
+    const data = await res.json();
+    showApiResponse('EnableService (AbortTransaction)', data.adyenResponse || data);
+    if (!res.ok || !data.ok) {
+      // Leave the panel open: the terminal is still holding the card, and hiding
+      // that would just look like the app had finished.
+      loyaltyStep(data.error || 'Could not release the terminal — cancel on the terminal itself', 'error');
+      return false;
+    }
+    _loyalty.holding = false;
+    _loyalty.cardAcquisition = null;
+    $btnLoyaltyPay.classList.add('hidden');
+    loyaltyStep('Terminal released', 'ok');
+    return true;
+  } catch (err) {
+    loyaltyStep(`Could not release the terminal: ${err.message}`, 'error');
+    return false;
+  } finally {
+    $btnLoyaltyClose.disabled = false;
+  }
 }
 
 // Card acquisition, member lookup and the confirmation question, in the order the
@@ -967,14 +1040,25 @@ async function loyaltyReadCard() {
 
   loyaltyReset();
   _loyalty.amount = Math.round(cartTotal() * 100) / 100;
+  // Generated here rather than server-side so the cancel button has something to
+  // quote while the read is still in flight.
+  _loyalty.serviceId = generateServiceId();
+  _loyalty.reading = true;
   const currency = state.config.currency || 'EUR';
 
   $btnLoyaltyRead.disabled = true;
+  $btnLoyaltyCancel.classList.remove('hidden');
   loyaltyStep('Waiting for the card on the terminal...');
 
   try {
-    const res = await fetch('/api/loyalty/read-card', { method: 'POST' });
+    const res = await fetch('/api/loyalty/read-card', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serviceId: _loyalty.serviceId })
+    });
     const data = await res.json();
+    _loyalty.reading = false;
+    $btnLoyaltyCancel.classList.add('hidden');
     showApiResponse('CardAcquisition', data.adyenResponse || data);
 
     if (!res.ok) {
@@ -982,6 +1066,9 @@ async function loyaltyReadCard() {
       return;
     }
 
+    // From here the terminal holds the card data until a payment quotes it or it
+    // is released.
+    _loyalty.holding = true;
     _loyalty.cardAcquisition = data.cardAcquisition;
     if (data.alias) {
       $loyaltyAlias.value = data.alias;
@@ -990,7 +1077,8 @@ async function loyaltyReadCard() {
     loyaltyStep(`Card read${data.maskedPan ? ` · ${data.maskedPan}` : ''}${data.paymentBrand ? ` · ${data.paymentBrand}` : ''}`, 'ok');
 
     if (!data.member) {
-      loyaltyStep('No member matches this card — copy the alias into User data to link it', 'warning');
+      loyaltyStep('No member matches this card — copy the alias into Membership Management to link it', 'warning');
+      loyaltyStep('The terminal is holding the card: pay the full amount, or Close to release it', 'warning');
       $btnLoyaltyPay.classList.remove('hidden');
       refreshIcons();
       return;
@@ -1009,13 +1097,14 @@ async function loyaltyReadCard() {
     const confirmRes = await fetch('/api/loyalty/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ memberId: data.member.id, amount: _loyalty.amount })
+      body: JSON.stringify({ memberId: data.member.id, amount: _loyalty.amount, currency })
     });
     const confirmData = await confirmRes.json();
     showApiResponse('Input (GetConfirmation)', confirmData.adyenResponse || confirmData);
 
     if (!confirmRes.ok) {
       loyaltyStep(confirmData.error || 'The question was not answered', 'error');
+      loyaltyStep('The terminal is holding the card: pay the full amount, or Close to release it', 'warning');
       $btnLoyaltyPay.classList.remove('hidden');
       refreshIcons();
       return;
@@ -1030,7 +1119,12 @@ async function loyaltyReadCard() {
     loyaltyStep(`Redeeming ${confirmData.discount} points · ${currency} ${confirmData.finalAmount.toFixed(2)} on the card`, 'ok');
     await loyaltyPay(confirmData.discount);
   } catch (err) {
+    _loyalty.reading = false;
+    $btnLoyaltyCancel.classList.add('hidden');
     loyaltyStep(`Card read failed: ${err.message}`, 'error');
+    if (_loyalty.holding) {
+      loyaltyStep('The terminal is still holding the card: Close to release it', 'warning');
+    }
   } finally {
     $btnLoyaltyRead.disabled = false;
     refreshIcons();
@@ -1052,51 +1146,92 @@ async function loyaltyPay(discount) {
       originalAmount: _loyalty.amount
     };
   }
-  closeLoyaltyModal();
+  // The payment consumes the card data, so the terminal must not be released:
+  // clearing this first stops the close handler from doing exactly that.
+  _loyalty.holding = false;
+  _loyalty.reading = false;
+  $loyaltyModal.classList.add('hidden');
   await processPayment('', '', extra);
 }
 
-// ====================== User data ======================
-function renderUserData(data) {
-  const list = data.members || [];
+// ====================== Membership Management ======================
+// Rows are edited locally and only committed by Save, so adding or removing a
+// member is undone by closing without saving.
+let _members = [];
+
+const MEMBER_FIELDS = [
+  { key: 'displayName', label: 'Name', type: 'text', placeholder: 'Full name' },
+  { key: 'email', label: 'Email', type: 'email', placeholder: 'name@example.com' },
+  { key: 'points', label: 'Points', type: 'number', placeholder: '0' },
+  { key: 'alias', label: 'Alias', type: 'text', placeholder: 'Card alias from Read card' }
+];
+
+function renderUserData() {
   $userdataList.innerHTML = '';
-  if (list.length === 0) {
+  if (_members.length === 0) {
     $userdataList.innerHTML = '<div class="empty-state">No members yet</div>';
     return;
   }
 
-  for (const member of list) {
+  _members.forEach((member, index) => {
     const row = document.createElement('div');
     row.className = 'userdata-row';
-    row.innerHTML = `
-      <div class="userdata-fields">
-        <input type="text" class="ttp-input userdata-name" placeholder="Name" />
-        <input type="email" class="ttp-input userdata-email" placeholder="Email" />
-        <input type="number" class="ttp-input userdata-points" min="0" step="1" placeholder="Points" />
-        <input type="text" class="ttp-input userdata-alias" placeholder="Card alias" />
-      </div>
-      <div class="userdata-actions">
-        <button class="btn btn-outline settings-btn userdata-save">Save</button>
-        <button class="btn btn-outline settings-btn userdata-delete">Delete</button>
-      </div>`;
-    // Values are assigned rather than interpolated, so a name with quotes or
-    // angle brackets in it cannot break out of the markup.
-    row.querySelector('.userdata-name').value = member.displayName;
-    row.querySelector('.userdata-email').value = member.email;
-    row.querySelector('.userdata-points').value = member.points;
-    row.querySelector('.userdata-alias').value = member.alias;
-    row.querySelector('.userdata-save').addEventListener('click', () => saveMember(member.id, row));
-    row.querySelector('.userdata-delete').addEventListener('click', () => deleteMember(member.id));
+
+    const head = document.createElement('div');
+    head.className = 'userdata-row-head';
+    const title = document.createElement('span');
+    title.className = 'userdata-row-title';
+    title.textContent = member.displayName || 'New member';
+    const remove = document.createElement('button');
+    remove.className = 'userdata-remove';
+    remove.type = 'button';
+    remove.title = 'Remove this member';
+    remove.textContent = '✕';
+    remove.addEventListener('click', () => {
+      _members.splice(index, 1);
+      renderUserData();
+    });
+    head.append(title, remove);
+    row.appendChild(head);
+
+    for (const field of MEMBER_FIELDS) {
+      const wrap = document.createElement('label');
+      wrap.className = 'userdata-field';
+      const label = document.createElement('span');
+      label.className = 'userdata-field-label';
+      label.textContent = field.label;
+      const input = document.createElement('input');
+      input.className = 'userdata-input';
+      input.type = field.type;
+      input.placeholder = field.placeholder;
+      if (field.type === 'number') {
+        input.min = '0';
+        input.step = '1';
+      }
+      // Assigned rather than interpolated into markup, so a name containing
+      // quotes or angle brackets cannot break the row.
+      input.value = member[field.key];
+      input.addEventListener('input', () => {
+        member[field.key] = input.value;
+        if (field.key === 'displayName') title.textContent = input.value || 'New member';
+      });
+      wrap.append(label, input);
+      row.appendChild(wrap);
+    }
+
     $userdataList.appendChild(row);
-  }
+  });
 }
 
 async function loadUserData() {
   try {
     const res = await fetch('/api/members');
     if (!res.ok) throw new Error(`Server answered ${res.status}`);
-    renderUserData(await res.json());
+    const data = await res.json();
+    _members = (data.members || []).map(m => ({ ...m }));
+    renderUserData();
   } catch (err) {
+    _members = [];
     $userdataList.innerHTML = '';
     const error = document.createElement('div');
     error.className = 'empty-state';
@@ -1105,79 +1240,41 @@ async function loadUserData() {
   }
 }
 
-function readMemberRow(row) {
-  return {
-    displayName: row.querySelector('.userdata-name').value,
-    email: row.querySelector('.userdata-email').value,
-    points: row.querySelector('.userdata-points').value,
-    alias: row.querySelector('.userdata-alias').value
-  };
+function addMember() {
+  _members.push({ displayName: '', email: '', points: 0, alias: '' });
+  renderUserData();
+  // Put the caret in the new row's name field, which is the only required one.
+  const inputs = $userdataList.querySelectorAll('.userdata-row:last-child .userdata-input');
+  if (inputs.length) inputs[0].focus();
 }
 
-async function saveMember(id, row) {
-  try {
-    const res = await fetch(`/api/members/${encodeURIComponent(id)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(readMemberRow(row))
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      showToast(data.error || 'Could not save the member', 'error');
-      return;
-    }
-    renderUserData(data);
-    showToast(`${data.member.displayName} saved`, 'success');
-  } catch (err) {
-    showToast(`Could not save the member: ${err.message}`, 'error');
-  }
-}
-
-async function deleteMember(id) {
-  try {
-    const res = await fetch(`/api/members/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    const data = await res.json();
-    if (!res.ok) {
-      showToast(data.error || 'Could not delete the member', 'error');
-      return;
-    }
-    renderUserData(data);
-    showToast('Member deleted', 'info');
-  } catch (err) {
-    showToast(`Could not delete the member: ${err.message}`, 'error');
-  }
-}
-
-async function addMember() {
+async function saveMembers() {
+  $btnUserdataSave.disabled = true;
   try {
     const res = await fetch('/api/members', {
-      method: 'POST',
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ displayName: 'New member', email: '', points: 0, alias: '' })
+      body: JSON.stringify({ members: _members })
     });
     const data = await res.json();
     if (!res.ok) {
-      showToast(data.error || 'Could not add the member', 'error');
+      showToast(data.error || 'Could not save the members', 'error');
+      // Highlight the row the server rejected so the message is actionable.
+      const rows = $userdataList.querySelectorAll('.userdata-row');
+      rows.forEach(r => r.classList.remove('userdata-row-invalid'));
+      if (Number.isInteger(data.index) && rows[data.index]) {
+        rows[data.index].classList.add('userdata-row-invalid');
+        rows[data.index].scrollIntoView({ block: 'nearest' });
+      }
       return;
     }
-    renderUserData(data);
+    _members = (data.members || []).map(m => ({ ...m }));
+    renderUserData();
+    showToast(`${_members.length} member${_members.length === 1 ? '' : 's'} saved`, 'success');
   } catch (err) {
-    showToast(`Could not add the member: ${err.message}`, 'error');
-  }
-}
-
-async function resetMembers() {
-  try {
-    const res = await fetch('/api/members/reset', { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok) {
-      showToast(data.error || 'Could not restore the defaults', 'error');
-      return;
-    }
-    renderUserData(data);
-    showToast('Back to the default members', 'info');
-  } catch (err) {
-    showToast(`Could not restore the defaults: ${err.message}`, 'error');
+    showToast(`Could not save the members: ${err.message}`, 'error');
+  } finally {
+    $btnUserdataSave.disabled = false;
   }
 }
 
@@ -1873,6 +1970,7 @@ function bindEvents() {
   $btnLoyaltyOpen.addEventListener('click', openLoyaltyModal);
   $btnLoyaltyClose.addEventListener('click', closeLoyaltyModal);
   $btnLoyaltyRead.addEventListener('click', loyaltyReadCard);
+  $btnLoyaltyCancel.addEventListener('click', loyaltyAbortRead);
   $btnLoyaltyPay.addEventListener('click', () => loyaltyPay(0));
   $btnLoyaltyCopy.addEventListener('click', async () => {
     try {
@@ -1887,7 +1985,7 @@ function bindEvents() {
   $btnUserdataOpen.addEventListener('click', openUserDataModal);
   $btnUserdataClose.addEventListener('click', closeUserDataModal);
   $btnUserdataAdd.addEventListener('click', addMember);
-  $btnUserdataReset.addEventListener('click', resetMembers);
+  $btnUserdataSave.addEventListener('click', saveMembers);
   $btnClearOrders.addEventListener('click', clearOrders);
   $orderSearch.addEventListener('input', () => renderOrders());
   $btnClearResp.addEventListener('click', () => { $apiResponse.innerHTML = '<span class="log-empty">No response yet</span>'; });

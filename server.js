@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -1063,54 +1064,45 @@ app.get('/api/members', (_req, res) => {
   res.json({ members, usingDefaults: membersAreDefaults, minCharge: LOYALTY_MIN_CHARGE });
 });
 
-app.post('/api/members', (req, res) => {
-  const { error, value } = validateMemberInput(req.body);
-  if (error) return res.status(400).json({ error });
-  const member = { id: `member-${uuidv4().slice(0, 8)}`, ...value };
-  members.push(member);
-  try {
-    saveMembers();
-    res.json({ member, members });
-  } catch (err) {
-    res.status(500).json({ error: `Could not store the member: ${err.message}` });
+// The editor saves everything at once, so this replaces the whole list: rows added
+// or removed in the UI are only committed here. Nothing is written unless every
+// row validates, otherwise a single typo could half-save the list.
+app.put('/api/members', (req, res) => {
+  const incoming = req.body?.members;
+  if (!Array.isArray(incoming)) {
+    return res.status(400).json({ error: 'A members array is required' });
   }
-});
 
-app.put('/api/members/:id', (req, res) => {
-  const member = members.find(m => m.id === req.params.id);
-  if (!member) return res.status(404).json({ error: 'Member not found' });
-  const { error, value } = validateMemberInput(req.body);
-  if (error) return res.status(400).json({ error });
-  Object.assign(member, value);
-  try {
-    saveMembers();
-    res.json({ member, members });
-  } catch (err) {
-    res.status(500).json({ error: `Could not store the member: ${err.message}` });
+  const next = [];
+  const seenAliases = new Set();
+  for (let i = 0; i < incoming.length; i++) {
+    const { error, value } = validateMemberInput(incoming[i]);
+    if (error) return res.status(400).json({ error: `Row ${i + 1}: ${error}`, index: i });
+
+    // Two members sharing an alias would make the card lookup ambiguous, and it
+    // would silently resolve to whichever one happens to come first.
+    const key = value.alias.toLowerCase();
+    if (key) {
+      if (seenAliases.has(key)) {
+        return res.status(400).json({ error: `Row ${i + 1}: that alias is already used by another member`, index: i });
+      }
+      seenAliases.add(key);
+    }
+
+    const id = typeof incoming[i]?.id === 'string' && incoming[i].id
+      ? incoming[i].id
+      : `member-${uuidv4().slice(0, 8)}`;
+    next.push({ id, ...value });
   }
-});
 
-app.delete('/api/members/:id', (req, res) => {
-  const index = members.findIndex(m => m.id === req.params.id);
-  if (index < 0) return res.status(404).json({ error: 'Member not found' });
-  members.splice(index, 1);
+  const previous = members;
+  members = next;
   try {
     saveMembers();
     res.json({ members });
   } catch (err) {
+    members = previous;
     res.status(500).json({ error: `Could not store the members: ${err.message}` });
-  }
-});
-
-// Throws away the runtime file so the seed data comes back.
-app.post('/api/members/reset', (_req, res) => {
-  try {
-    fs.rmSync(MEMBERS_FILE, { force: true });
-    members = readMembersFile(MEMBERS_DEFAULT_FILE);
-    membersAreDefaults = true;
-    res.json({ members, usingDefaults: true });
-  } catch (err) {
-    res.status(500).json({ error: `Could not restore the default members: ${err.message}` });
   }
 });
 
@@ -1119,11 +1111,15 @@ app.post('/api/members/reset', (_req, res) => {
 // money, which is what makes member lookup before the payment possible. The
 // POITransactionID it returns is then quoted by the payment as
 // CardAcquisitionReference, so the shopper presents the card only once.
-app.post('/api/loyalty/read-card', async (_req, res) => {
+app.post('/api/loyalty/read-card', async (req, res) => {
   const poiId = getActivePoiId();
   if (!poiId) return res.status(400).json({ error: 'No terminal is selected' });
 
   const header = makeHeader('CardAcquisition');
+  // The client supplies the ServiceID so it can abort the read while this request
+  // is still waiting for the shopper to present a card, exactly as the payment
+  // flow does for its cancel button.
+  if (req.body?.serviceId) header.ServiceID = req.body.serviceId;
   const transactionId = uuidv4();
   const timestamp = new Date().toISOString();
 
@@ -1173,6 +1169,7 @@ app.post('/api/loyalty/read-card', async (_req, res) => {
 
     const member = findMemberByAlias(alias);
     res.json({
+      serviceId: header.ServiceID,
       alias,
       maskedPan: cardData?.MaskedPan || '',
       paymentBrand: cardData?.PaymentBrand || '',
@@ -1188,13 +1185,75 @@ app.post('/api/loyalty/read-card', async (_req, res) => {
   }
 });
 
+// --------------- API: Loyalty — abort a card read still in progress ---------------
+// While the terminal is still prompting for the card, the read is stopped the same
+// way a payment is: an abort quoting the ServiceID of the request to kill. The
+// pending read-card call then comes back with Failure / Aborted.
+app.post('/api/loyalty/abort', async (req, res) => {
+  const { serviceId } = req.body;
+  if (!serviceId) return res.status(400).json({ error: 'A serviceId is required' });
+
+  const poiId = getActivePoiId();
+  const header = makeHeader('Abort');
+  header.POIID = poiId;
+
+  const payload = {
+    SaleToPOIRequest: {
+      MessageHeader: header,
+      AbortRequest: {
+        AbortReason: 'MerchantAbort',
+        MessageReference: {
+          MessageCategory: 'CardAcquisition',
+          ServiceID: serviceId,
+          SaleID: process.env.ADYEN_SALE_ID || 'POSWebApp',
+          POIID: poiId
+        }
+      }
+    }
+  };
+
+  try {
+    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
+    res.json({ ok: true, adyenResponse: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --------------- API: Loyalty — release a completed card acquisition ---------------
+// Once the card has been read, the terminal holds the card data and sits on 'One
+// moment' waiting for the payment that quotes it. An abort will not clear that,
+// because the card acquisition itself already finished successfully. The documented
+// way out is an EnableService with AbortTransaction, which makes the terminal
+// discard the card data and return to idle.
+app.post('/api/loyalty/release', async (_req, res) => {
+  const poiId = getActivePoiId();
+  if (!poiId) return res.status(400).json({ error: 'No terminal is selected' });
+
+  const payload = {
+    SaleToPOIRequest: {
+      MessageHeader: makeHeader('EnableService'),
+      EnableServiceRequest: {
+        TransactionAction: 'AbortTransaction'
+      }
+    }
+  };
+
+  try {
+    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
+    const result = data?.SaleToPOIResponse?.EnableServiceResponse?.Response?.Result;
+    res.json({ ok: result === 'Success', result: result || null, adyenResponse: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --------------- API: Loyalty — ask the shopper on the terminal ---------------
 // An Input request with GetConfirmation puts a two-button question on the
-// terminal. The last two OutputText lines are the button labels, the ones before
-// them the message, so the member's name and balance are shown by the terminal
-// itself rather than read out loud at the till.
+// terminal, so the member's name and balance are shown to the shopper by the
+// terminal itself rather than read out loud at the till.
 app.post('/api/loyalty/confirm', async (req, res) => {
-  const { memberId, amount } = req.body;
+  const { memberId, amount, currency } = req.body;
   const poiId = getActivePoiId();
   if (!poiId) return res.status(400).json({ error: 'No terminal is selected' });
 
@@ -1207,6 +1266,9 @@ app.post('/api/loyalty/confirm', async (req, res) => {
   }
 
   const discount = redeemableAmount(member.points, total);
+  const cur = currency || process.env.CURRENCY || 'EUR';
+  const payable = Math.round((total - discount) * 100) / 100;
+
   const header = makeHeader('Input');
   // Input is a device-level message, not a transaction service.
   header.MessageClass = 'Device';
@@ -1220,9 +1282,16 @@ app.post('/api/loyalty/confirm', async (req, res) => {
           InfoQualify: 'Display',
           OutputContent: {
             OutputFormat: 'Text',
+            // Required: without it the terminal rejects the whole message with
+            // MessageFormat / 'PredefinedContent field missing and required' and
+            // stays on 'One moment' instead of showing the question.
+            PredefinedContent: { ReferenceID: 'GetConfirmation' },
+            // The four entries are positional: title, body, left button, right
+            // button. The title is clipped at roughly 20 characters on a portrait
+            // display, so the detail goes in the body instead.
             OutputText: [
-              { Text: `Welcome back, ${member.displayName}` },
-              { Text: `Use your credit ${member.points}` },
+              { Text: 'Welcome back' },
+              { Text: `${member.displayName}\nRedeem ${discount} of ${member.points} points?\nYou pay ${cur} ${payable.toFixed(2)}` },
               { Text: 'No' },
               { Text: 'Yes' }
             ]
@@ -2076,7 +2145,29 @@ app.get('*', (_req, res) => {
 // also duplicates the full URL into headers like X-Original-URL, so the request
 // line + headers can exceed Node's default 16KB maxHeaderSize and be rejected
 // with HTTP 431 before Express ever sees it. Raise the limit to accommodate it.
-const server = http.createServer({ maxHeaderSize: 64 * 1024 }, app);
+const serverOptions = { maxHeaderSize: 64 * 1024 };
+
+// Serving TLS here is for local development only: on Azure the platform
+// terminates HTTPS at its front end and forwards plain HTTP, so the certificate
+// files are absent there and this falls back to http. Generate them with
+// `npm run certs`.
+const HTTPS_KEY_FILE = process.env.HTTPS_KEY_FILE || path.join(__dirname, 'certs', 'localhost-key.pem');
+const HTTPS_CERT_FILE = process.env.HTTPS_CERT_FILE || path.join(__dirname, 'certs', 'localhost-cert.pem');
+
+let tlsOptions = null;
+try {
+  tlsOptions = {
+    key: fs.readFileSync(HTTPS_KEY_FILE),
+    cert: fs.readFileSync(HTTPS_CERT_FILE)
+  };
+} catch {
+  // No certificate: stay on http.
+}
+
+const server = tlsOptions
+  ? https.createServer({ ...serverOptions, ...tlsOptions }, app)
+  : http.createServer(serverOptions, app);
+
 server.listen(PORT, () => {
-  console.log(`POS Web App running at http://localhost:${PORT}`);
+  console.log(`POS Web App running at ${tlsOptions ? 'https' : 'http'}://localhost:${PORT}`);
 });

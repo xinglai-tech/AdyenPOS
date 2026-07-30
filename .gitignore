@@ -8,5 +8,8 @@ assets/receipt-settings.json
 # Loyalty members edited at runtime; assets/members.default.json is the seed data.
 assets/members.json
 
+# Self-signed certificate for local HTTPS; regenerate with `npm run certs`.
+certs/
+
 .DS_Store
 **/.DS_Store

@@ -234,7 +234,7 @@
         <div class="settings-label">Members</div>
         <p class="receipt-hint">A member is matched on the card alias the terminal returns, so paste the alias below into the member you want it to belong to.</p>
         <div class="logo-buttons">
-          <button id="btn-userdata-open" class="btn btn-outline settings-btn"><i data-lucide="users"></i>User data</button>
+          <button id="btn-userdata-open" class="btn btn-outline settings-btn"><i data-lucide="users"></i>Membership Management</button>
           <button id="btn-loyalty-read" class="btn btn-primary settings-btn"><i data-lucide="nfc"></i>Read card</button>
         </div>
       </div>
@@ -253,22 +253,20 @@
 
       <div class="overlay-actions">
         <button id="btn-loyalty-pay" class="btn btn-primary btn-action hidden">Pay full amount</button>
+        <button id="btn-loyalty-cancel" class="btn btn-danger btn-action hidden">Cancel on terminal</button>
         <button id="btn-loyalty-close" class="btn btn-outline btn-action">Close</button>
       </div>
     </div>
   </div>
 
-  <!-- ==================== User Data Modal ==================== -->
+  <!-- ==================== Membership Management Modal ==================== -->
   <div id="userdata-modal" class="overlay hidden">
     <div class="overlay-content modal-userdata">
-      <h3 class="overlay-title">User data</h3>
-      <p class="receipt-hint">Points redeem 1:1 against the basket currency. The alias is what identifies the card at the terminal; leave it empty to disable matching for that member.</p>
+      <h3 class="overlay-title">Membership Management</h3>
       <div id="userdata-list" class="userdata-list"></div>
-      <div class="logo-buttons">
-        <button id="btn-userdata-add" class="btn btn-outline settings-btn"><i data-lucide="user-plus"></i>Add member</button>
-        <button id="btn-userdata-reset" class="btn btn-outline settings-btn"><i data-lucide="undo-2"></i>Reset</button>
-      </div>
+      <button id="btn-userdata-add" class="btn btn-outline userdata-add"><i data-lucide="user-plus"></i>Add member</button>
       <div class="overlay-actions">
+        <button id="btn-userdata-save" class="btn btn-primary btn-action">Save</button>
         <button id="btn-userdata-close" class="btn btn-outline btn-action">Close</button>
       </div>
     </div>
