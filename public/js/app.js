@@ -934,7 +934,20 @@ const _loyalty = {
   // True once the card has been read and the terminal is holding the card data,
   // waiting for a payment to quote it. Until that is consumed or released, the
   // terminal is stuck on 'One moment' and unusable for anything else.
-  holding: false
+  holding: false,
+  // The card was read but matched no member. Releasing the terminal is then the
+  // moment to tell the shopper why, since nothing else on the terminal will.
+  unmatched: false
+};
+
+// Replaces the terminal's own 'Transaction canceled' screen when the card belongs to
+// nobody. Two entries only: the terminal draws the first as a header and the second
+// as a footer.
+const LOYALTY_NOT_A_MEMBER = {
+  messageHeader: 'Not a member',
+  messageFooter: 'Contact staff to register',
+  // No icon: a red cross would read as a card or payment problem, which this is not.
+  icon: 'Idle'
 };
 
 function loyaltyReset() {
@@ -944,6 +957,7 @@ function loyaltyReset() {
   _loyalty.serviceId = null;
   _loyalty.reading = false;
   _loyalty.holding = false;
+  _loyalty.unmatched = false;
   $loyaltySteps.innerHTML = '';
   $loyaltySteps.classList.add('hidden');
   $loyaltyAliasRow.classList.add('hidden');
@@ -986,7 +1000,7 @@ async function closeLoyaltyModal() {
     return;
   }
   if (_loyalty.holding) {
-    await loyaltyRelease();
+    await loyaltyRelease(_loyalty.unmatched ? LOYALTY_NOT_A_MEMBER : null);
   }
   $loyaltyModal.classList.add('hidden');
 }
@@ -1017,10 +1031,14 @@ async function loyaltyAbortRead() {
 }
 
 // Hands the held card data back so the terminal leaves 'One moment' and goes idle.
-async function loyaltyRelease() {
+async function loyaltyRelease(message = null) {
   $btnLoyaltyClose.disabled = true;
   try {
-    const res = await fetch('/api/loyalty/release', { method: 'POST' });
+    const res = await fetch('/api/loyalty/release', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(message || {})
+    });
     const data = await res.json();
     showApiResponse('EnableService (AbortTransaction)', data.adyenResponse || data);
     if (!res.ok || !data.ok) {
@@ -1096,6 +1114,7 @@ async function loyaltyReadCard() {
     loyaltyStep(`Card read${data.maskedPan ? ` · ${data.maskedPan}` : ''}${data.paymentBrand ? ` · ${data.paymentBrand}` : ''}`, 'ok');
 
     if (!data.member) {
+      _loyalty.unmatched = true;
       loyaltyStep('No member matches this card — copy the alias into User management to link it', 'warning');
       loyaltyStep('The terminal is holding the card: pay the full amount, or Close to release it', 'warning');
       $btnLoyaltyPay.classList.remove('hidden');

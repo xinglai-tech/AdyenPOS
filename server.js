@@ -999,6 +999,10 @@ const MEMBER_MAX_POINTS = 1000000;
 // leave something behind for the card to pay.
 const LOYALTY_MIN_CHARGE = 0.01;
 
+// Icons the terminal will draw above a custom message. Anything else is refused, so
+// the value is checked rather than passed straight through from the client.
+const DISPLAY_ICONS = ['Accepted', 'AcceptedAnimated', 'Declined', 'DeclinedAnimated', 'Idle'];
+
 function normaliseMember(raw, index) {
   return {
     id: typeof raw?.id === 'string' && raw.id ? raw.id : `member-${index + 1}`,
@@ -1245,15 +1249,37 @@ app.post('/api/loyalty/abort', async (req, res) => {
 // because the card acquisition itself already finished successfully. The documented
 // way out is an EnableService with AbortTransaction, which makes the terminal
 // discard the card data and return to idle.
-app.post('/api/loyalty/release', async (_req, res) => {
+app.post('/api/loyalty/release', async (req, res) => {
   const poiId = getActivePoiId();
   if (!poiId) return res.status(400).json({ error: 'No terminal is selected' });
+
+  // Left out, the terminal falls back to its own screen: 'Canceled', a red cross and
+  // 'Transaction canceled'. A DisplayOutput replaces all three. OutputText is a
+  // header and a footer rather than a list of lines, and PredefinedContent picks the
+  // icon, where Idle means none at all.
+  const header = typeof req.body?.messageHeader === 'string' ? req.body.messageHeader.trim() : '';
+  const footer = typeof req.body?.messageFooter === 'string' ? req.body.messageFooter.trim() : '';
+  const icon = DISPLAY_ICONS.includes(req.body?.icon) ? req.body.icon : 'Idle';
 
   const payload = {
     SaleToPOIRequest: {
       MessageHeader: makeHeader('EnableService'),
       EnableServiceRequest: {
-        TransactionAction: 'AbortTransaction'
+        TransactionAction: 'AbortTransaction',
+        ...(header ? {
+          DisplayOutput: {
+            Device: 'CustomerDisplay',
+            InfoQualify: 'Display',
+            OutputContent: {
+              OutputFormat: 'Text',
+              PredefinedContent: { ReferenceID: icon },
+              OutputText: [
+                { Text: header },
+                ...(footer ? [{ Text: footer }] : [])
+              ]
+            }
+          }
+        } : {})
       }
     }
   };
