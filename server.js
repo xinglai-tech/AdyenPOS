@@ -2,8 +2,10 @@ require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const crypto = require('crypto');
+const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const QRCode = require('qrcode');
 const nexoCrypto = require('./nexoCrypto');
 
 const app = express();
@@ -513,21 +515,41 @@ app.post('/api/transaction-status', async (req, res) => {
 });
 
 // --------------- Receipt printing helpers ---------------
-// Number of characters per line on the terminal's receipt printer. Used to
-// right-align values against their labels.
-const RECEIPT_PRINT_WIDTH = parseInt(process.env.RECEIPT_PRINT_WIDTH || '32', 10);
+// The receipt is printed as one XHTML document rather than as Text output: only
+// XHTML can carry the logo image, the QR code and more than one font size. The
+// print head is 384 px wide, which is what every width below is measured against.
+const RECEIPT_PRINT_WIDTH_PX = 384;
 
 // Store name printed as the receipt title. Adyen's own merchant header slots are
 // account configuration, so the reprint renders this instead.
 const RECEIPT_STORE_NAME = process.env.RECEIPT_STORE_NAME || 'My Super Store';
+
+// Scanned by the shopper, printed at the very bottom of the receipt.
+const RECEIPT_QR_URL = process.env.RECEIPT_QR_URL || 'https://adyen.com.cn';
+
+// 1-bit black and white PNG: the print head can only burn or not burn a dot, so
+// grayscale or colour artwork comes out dithered and muddy.
+const RECEIPT_LOGO_FILE = path.join(__dirname, 'assets', 'receipt-logo.png');
+let _logoBase64;
+function loadReceiptLogo() {
+  if (_logoBase64 === undefined) {
+    try {
+      _logoBase64 = fs.readFileSync(RECEIPT_LOGO_FILE).toString('base64');
+    } catch (err) {
+      console.warn(`Receipt logo not printed: ${err.message}`);
+      _logoBase64 = null;
+    }
+  }
+  return _logoBase64;
+}
 
 // Technical card and acquirer details that Adyen puts on the receipt but that are
 // noise for the shopper. Dropped when we render our own printout.
 const RECEIPT_HIDDEN_KEYS = new Set([
   'panSeq', 'preferredName', 'cardType', 'paymentMethodVariant', 'posEntryMode',
   'aid', 'mid', 'tid', 'ptid', 'authCode', 'txRef',
-  // Our own title already says this is a copy, the PSP reference identifies the
-  // payment better than our internal UUID, and the type is always the same here.
+  // We print our own store name, the PSP reference identifies the payment better
+  // than our internal UUID, and the type is always the same here.
   'cardholderHeader', 'merchantTitle', 'mref', 'txtype',
   // Adyen's "Retain for your records" footer; not wanted on our printout.
   'retain'
@@ -548,9 +570,9 @@ function extractPaymentReceipt(root, qualifier = 'CustomerReceipt') {
 }
 
 // Adyen returns receipt lines as form-encoded key/name/value triplets, e.g.
-// "name=Date&value=29%2f07%2f2026&key=txdate". The printer needs plain text, so
-// render each line as a label on the left and its value right-aligned.
-function buildReceiptOutputText(items, insertions = {}) {
+// "name=Date&value=29%2f07%2f2026&key=txdate". They become intermediate line
+// objects here, which renderReceiptXhtml turns into markup.
+function buildReceiptLines(items, insertions = {}) {
   const lines = [];
   const inserted = new Set();
   for (const item of items) {
@@ -565,24 +587,19 @@ function buildReceiptOutputText(items, insertions = {}) {
       inserted.add(key);
     }
     if (RECEIPT_HIDDEN_KEYS.has(key)) continue;
-    const style = (item?.CharacterStyle === 'Bold' || item?.CharacterStyle === 'Underline')
-      ? item.CharacterStyle
-      : 'Normal';
+    const bold = item?.CharacterStyle === 'Bold';
 
     if (!name && !value) {
       // "filler" is an intentional blank line; empty headerN/footerN entries are
       // unconfigured merchant header slots and would print as stray blank lines.
-      if (key === 'filler') lines.push({ Text: '', EndOfLineFlag: true });
+      if (key === 'filler') lines.push({ type: 'blank' });
       continue;
     }
     if (!value) {
-      lines.push({ Text: name, CharacterStyle: style, Alignment: 'Centred', EndOfLineFlag: true });
+      lines.push({ type: 'centred', text: name, bold });
       continue;
     }
-    const label = name || '';
-    const gap = RECEIPT_PRINT_WIDTH - label.length - value.length;
-    const text = gap > 0 ? label + ' '.repeat(gap) + value : `${label} ${value}`;
-    lines.push({ Text: text, CharacterStyle: style, EndOfLineFlag: true });
+    lines.push({ type: 'pair', label: name || '', value, bold });
   }
   // The receipt layout is generated dynamically, so an anchor key may be absent.
   // Append anything that never found its anchor rather than dropping it.
@@ -597,8 +614,8 @@ function buildReceiptOutputText(items, insertions = {}) {
 function collapseBlankLines(lines) {
   const out = [];
   for (const line of lines) {
-    const isBlank = !line.Text;
-    if (isBlank && (out.length === 0 || !out[out.length - 1].Text)) continue;
+    const isBlank = line.type === 'blank';
+    if (isBlank && (out.length === 0 || out[out.length - 1].type === 'blank')) continue;
     out.push(line);
   }
   return out;
@@ -608,12 +625,7 @@ function collapseBlankLines(lines) {
 // Area, so it is worth printing even though Adyen's receipt data omits it.
 function buildPspLines(order) {
   if (!order?.pspReference) return [];
-  const label = 'PSP ref.';
-  const gap = RECEIPT_PRINT_WIDTH - label.length - order.pspReference.length;
-  return [{
-    Text: gap > 0 ? label + ' '.repeat(gap) + order.pspReference : `${label} ${order.pspReference}`,
-    EndOfLineFlag: true
-  }];
+  return [{ type: 'pair', label: 'PSP ref.', value: order.pspReference }];
 }
 
 // Renders the purchased products as receipt lines. Adyen's receipt data only
@@ -623,26 +635,66 @@ function buildItemLines(order) {
   const items = Array.isArray(order?.items) ? order.items : [];
   if (items.length === 0) return [];
   const currency = order.currency || '';
-  const lines = [{ Text: '', EndOfLineFlag: true }];
+  const lines = [{ type: 'blank' }];
   for (const item of items) {
     const qty = item.qty || 1;
-    const label = `${item.name || 'Item'} x${qty}`;
-    const amount = `${currency} ${((item.price || 0) * qty).toFixed(2)}`.trim();
-    const gap = RECEIPT_PRINT_WIDTH - label.length - amount.length;
     lines.push({
-      Text: gap > 0 ? label + ' '.repeat(gap) + amount : `${label} ${amount}`,
-      EndOfLineFlag: true
+      type: 'pair',
+      label: `${item.name || 'Item'} x${qty}`,
+      value: `${currency} ${((item.price || 0) * qty).toFixed(2)}`.trim()
     });
   }
-  lines.push({ Text: '', EndOfLineFlag: true });
+  lines.push({ type: 'blank' });
   return lines;
+}
+
+function escapeXml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// Renders the receipt as an XHTML fragment: store name, logo, the payment lines
+// in a two-column table so amounts align without padding them with spaces, and
+// the QR code at the bottom. Both images are inline base64 PNGs; note the space
+// after "base64," that Adyen requires.
+function renderReceiptXhtml(lines, { logoBase64, qrBase64 } = {}) {
+  const rows = lines.map(line => {
+    if (line.type === 'blank') return '<tr><td colspan="2">&#160;</td></tr>';
+    if (line.type === 'centred') {
+      const text = escapeXml(line.text);
+      return `<tr><td colspan="2" align="center">${line.bold ? `<b>${text}</b>` : text}</td></tr>`;
+    }
+    const label = escapeXml(line.label);
+    const value = escapeXml(line.value);
+    return '<tr>'
+      + `<td align="left">${line.bold ? `<b>${label}</b>` : label}</td>`
+      + `<td align="right">${line.bold ? `<b>${value}</b>` : value}</td>`
+      + '</tr>';
+  });
+
+  const parts = [
+    `<div align="center" style="font-size:34px;font-weight:bold">${escapeXml(RECEIPT_STORE_NAME)}</div>`
+  ];
+  if (logoBase64) {
+    parts.push(`<div align="center"><img src="data:image/png;base64, ${logoBase64}" width="240"/></div>`);
+  }
+  parts.push(`<table width="100%" style="font-size:20px">${rows.join('')}</table>`);
+  if (qrBase64) {
+    parts.push(`<div align="center"><img src="data:image/png;base64, ${qrBase64}" width="240"/></div>`);
+    parts.push(`<div align="center" style="font-size:16px">${escapeXml(RECEIPT_QR_URL)}</div>`);
+  }
+
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<div style="width:${RECEIPT_PRINT_WIDTH_PX}px">${parts.join('')}</div>`;
 }
 
 // --------------- API: Reprint Receipt ---------------
 // Reprints the shopper receipt of an earlier payment on the terminal that took
 // it. ReceiptReprintFlag on a TransactionStatus request does not reliably put
 // paper out (it mainly returns the receipt data), so this instead renders the
-// receipt data into text and sends an explicit Terminal API Print request.
+// receipt data into XHTML and sends an explicit Terminal API Print request.
 // Requires a cloud-connected terminal with a built-in printer; the Payments app
 // (Tap to Pay) cannot print at all.
 app.post('/api/reprint-receipt', async (req, res) => {
@@ -693,15 +745,18 @@ app.post('/api/reprint-receipt', async (req, res) => {
       });
     }
 
-    const outputText = collapseBlankLines([
-      { Text: 'DUPLICATE RECEIPT', CharacterStyle: 'Bold', Alignment: 'Centred', EndOfLineFlag: true },
-      { Text: RECEIPT_STORE_NAME, CharacterStyle: 'Bold', Alignment: 'Centred', EndOfLineFlag: true },
-      { Text: '', EndOfLineFlag: true },
-      ...buildReceiptOutputText(items, {
-        mref: buildPspLines(order),
-        totalAmount: buildItemLines(order)
-      })
-    ]);
+    const lines = collapseBlankLines(buildReceiptLines(items, {
+      mref: buildPspLines(order),
+      totalAmount: buildItemLines(order)
+    }));
+
+    // 240 px of the 384 px print head, and margin 1 so the quiet zone around the
+    // code is not lost against the paper edge.
+    const qrPng = await QRCode.toBuffer(RECEIPT_QR_URL, { type: 'png', width: 240, margin: 1 });
+    const xhtml = renderReceiptXhtml(lines, {
+      logoBase64: loadReceiptLogo(),
+      qrBase64: qrPng.toString('base64')
+    });
 
     const printPayload = {
       SaleToPOIRequest: {
@@ -719,8 +774,9 @@ app.post('/api/reprint-receipt', async (req, res) => {
             DocumentQualifier: 'Document',
             ResponseMode: 'PrintEnd',
             OutputContent: {
-              OutputFormat: 'Text',
-              OutputText: outputText
+              OutputFormat: 'XHTML',
+              // Adyen expects the whole document base64-encoded, images included.
+              OutputXHTML: Buffer.from(xhtml, 'utf8').toString('base64')
             }
           }
         }
