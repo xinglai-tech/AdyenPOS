@@ -526,8 +526,8 @@ html, body {
 }
 .loyalty-alias-row .settings-btn { width: auto; flex-shrink: 0; }
 
-/* Membership Management modal: one block per member, each field a label/value row
-   so the fields stay readable without inflating the type size. */
+/* User management modal: one block per member, each field a label/value row so
+   the fields stay readable without inflating the type size. */
 .userdata-list {
   display: flex;
   flex-direction: column;

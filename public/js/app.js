@@ -952,6 +952,9 @@ function renderLoyaltyBasket() {
   $loyaltyBasket.textContent = count === 0
     ? 'Cart is empty — add products before reading a card'
     : `${count} item${count === 1 ? '' : 's'} · ${currency} ${cartTotal().toFixed(2)}`;
+  // Reading a card is only meaningful against a basket: the discount and the
+  // payment that follows are both derived from the total.
+  $btnLoyaltyRead.disabled = count === 0;
 }
 
 function openLoyaltyModal() {
@@ -1077,7 +1080,7 @@ async function loyaltyReadCard() {
     loyaltyStep(`Card read${data.maskedPan ? ` · ${data.maskedPan}` : ''}${data.paymentBrand ? ` · ${data.paymentBrand}` : ''}`, 'ok');
 
     if (!data.member) {
-      loyaltyStep('No member matches this card — copy the alias into Membership Management to link it', 'warning');
+      loyaltyStep('No member matches this card — copy the alias into User management to link it', 'warning');
       loyaltyStep('The terminal is holding the card: pay the full amount, or Close to release it', 'warning');
       $btnLoyaltyPay.classList.remove('hidden');
       refreshIcons();
@@ -1126,7 +1129,9 @@ async function loyaltyReadCard() {
       loyaltyStep('The terminal is still holding the card: Close to release it', 'warning');
     }
   } finally {
-    $btnLoyaltyRead.disabled = false;
+    // Not unconditionally enabled: a completed payment empties the cart, which
+    // leaves nothing to read a card against.
+    $btnLoyaltyRead.disabled = state.cart.length === 0;
     refreshIcons();
   }
 }
@@ -1154,7 +1159,7 @@ async function loyaltyPay(discount) {
   await processPayment('', '', extra);
 }
 
-// ====================== Membership Management ======================
+// ====================== User management ======================
 // Rows are edited locally and only committed by Save, so adding or removing a
 // member is undone by closing without saving.
 let _members = [];

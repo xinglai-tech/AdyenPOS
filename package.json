@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "certs": "bash scripts/make-dev-certs.sh"
+    "certs": "bash scripts/make-dev-certs.sh",
+    "test": "node --test \"test/*.test.js\""
   },
   "engines": {
     "node": ">=18.0.0"

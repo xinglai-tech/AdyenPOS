@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const nexoCrypto = require('./nexoCrypto');
+const { readInputResult, readEnableServiceResult } = require('./nexoParse');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1241,8 +1242,14 @@ app.post('/api/loyalty/release', async (_req, res) => {
 
   try {
     const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
-    const result = data?.SaleToPOIResponse?.EnableServiceResponse?.Response?.Result;
-    res.json({ ok: result === 'Success', result: result || null, adyenResponse: data });
+    const parsed = readEnableServiceResult(data);
+    const reason = [parsed.errorCondition, parsed.message].filter(Boolean).join(': ');
+    res.json({
+      ok: parsed.result === 'Success',
+      result: parsed.result || null,
+      error: parsed.result === 'Success' ? undefined : `Could not release the terminal${reason ? ` (${reason})` : ''}`,
+      adyenResponse: data
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1309,18 +1316,20 @@ app.post('/api/loyalty/confirm', async (req, res) => {
 
   try {
     const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
-    const inputResponse = data?.SaleToPOIResponse?.InputResponse;
-    const response = inputResponse?.Response;
+    const parsed = readInputResult(data);
 
-    if (response?.Result !== 'Success') {
+    if (parsed.result !== 'Success') {
+      // The terminal explains itself in AdditionalResponse, so pass that through
+      // rather than reporting a bare 'no answer'.
+      const reason = [parsed.errorCondition, parsed.message].filter(Boolean).join(': ');
       return res.status(400).json({
-        error: `The terminal did not answer the question${response?.ErrorCondition ? ` (${response.ErrorCondition})` : ''}`,
-        errorCondition: response?.ErrorCondition || '',
+        error: `The terminal did not answer the question${reason ? ` (${reason})` : ''}`,
+        errorCondition: parsed.errorCondition,
         adyenResponse: data
       });
     }
 
-    const confirmed = inputResponse?.InputResult?.Input?.ConfirmedFlag === true;
+    const confirmed = parsed.confirmed;
     res.json({
       confirmed,
       pointsAvailable: member.points,
