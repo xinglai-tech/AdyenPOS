@@ -691,8 +691,15 @@ const TERMINAL_MODELS = {
   S1F4:  { label: 'S1F4 Pro',   family: 'printer' }
 };
 
-// Line art rather than product photography: it stays legible at this size, needs no
-// network, and cannot go stale when a model is refreshed.
+// Models with a product shot in /img/terminals. Kept as a list rather than probing
+// for the file so a missing image falls back to the outline without a failed
+// request, and so newly added models are an explicit decision.
+const TERMINAL_PHOTOS = new Set([
+  'AMS1', 'SFO1', 'E285', 'S1U2', 'P630', 'V400M', 'V240M', 'V400C', 'S1F2', 'S1E2L', 'NYC1', 'M450'
+]);
+
+// Fallback for models with no photo, and for anything the list above does not cover.
+// Line art stays legible at this size and cannot go stale when a model is refreshed.
 const TERMINAL_ART = {
   mobile: '<rect x="9" y="3" width="22" height="50" rx="5"/><rect x="13" y="9" width="14" height="19" rx="2"/><circle cx="20" cy="41" r="2"/>',
   printer: '<rect x="9" y="3" width="22" height="50" rx="5"/><path d="M13 8h14"/><rect x="13" y="14" width="14" height="17" rx="2"/><circle cx="20" cy="43" r="2"/>',
@@ -711,13 +718,14 @@ function terminalModelInfo(poiId) {
   const serial = dash > 0 ? text.slice(dash + 1) : '';
   const key = rawModel.toUpperCase();
   // Longest match first so S1E2L is not claimed by a shorter S1E2 entry.
-  const match = TERMINAL_MODELS[key] || TERMINAL_MODELS[
-    Object.keys(TERMINAL_MODELS).filter(k => key.startsWith(k)).sort((a, b) => b.length - a.length)[0]
-  ];
+  const matchKey = TERMINAL_MODELS[key] ? key
+    : Object.keys(TERMINAL_MODELS).filter(k => key.startsWith(k)).sort((a, b) => b.length - a.length)[0];
+  const match = TERMINAL_MODELS[matchKey];
   const label = match?.label || rawModel || 'Terminal';
   return {
     label,
     family: match?.family || 'mobile',
+    photo: TERMINAL_PHOTOS.has(matchKey) ? `/img/terminals/${matchKey}.webp` : '',
     serial,
     title: serial ? `${label} - ${serial}` : label
   };
@@ -781,8 +789,10 @@ function renderTerminals() {
     </div>
     <div class="terminal-card">
       <div class="terminal-thumb">
-        <svg viewBox="0 0 40 56" fill="none" stroke="currentColor" stroke-width="1.6"
-             stroke-linecap="round" stroke-linejoin="round">${TERMINAL_ART[info.family]}</svg>
+        ${info.photo
+          ? `<img src="${info.photo}" alt="${info.label}" loading="lazy">`
+          : `<svg viewBox="0 0 40 56" fill="none" stroke="currentColor" stroke-width="1.6"
+                  stroke-linecap="round" stroke-linejoin="round">${TERMINAL_ART[info.family]}</svg>`}
       </div>
       <div class="terminal-meta">
         <div class="terminal-model-row">

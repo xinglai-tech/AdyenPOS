@@ -466,11 +466,19 @@ html, body {
 }
 .terminal-thumb {
   flex-shrink: 0;
-  width: 34px;
-  height: 46px;
+  width: 40px;
+  height: 54px;
   color: var(--text-light);
 }
 .terminal-thumb svg { width: 100%; height: 100%; display: block; }
+/* contain, so the taller countertop units and the small readers both sit inside the
+   same box without being cropped or stretched. */
+.terminal-thumb img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
 .terminal-meta {
   flex: 1;
   min-width: 0;
