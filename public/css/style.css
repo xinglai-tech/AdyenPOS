@@ -1003,7 +1003,7 @@ html, body {
 .total-amount { font-size: 1.25rem; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
 /* A 150px gap inside a 50%-wide row left the two buttons a few dozen pixels each
    once the API log narrowed this column. Cap the row and scale the gap with it. */
-.cart-actions { display: flex; gap: clamp(16px, 7%, 40px); width: min(100%, 30rem); margin: 0 auto; }
+.cart-actions { display: flex; gap: clamp(28px, 13%, 64px); width: min(100%, 30rem); margin: 0 auto; }
 
 /* ============ Buttons ============ */
 /* Lucide swaps each `data-lucide` element for an inline SVG that inherits colour
@@ -1360,7 +1360,7 @@ html, body {
   /* Cart: natural height, no inner scroll lock */
   #cart-section { flex: none; overflow: visible; padding: 0 14px 16px; }
   .cart-items { overflow-y: visible; max-height: none; min-height: 120px; }
-  .cart-actions { width: 100%; gap: 16px; }
+  .cart-actions { width: 100%; gap: 28px; }
   .cart-item-subtotal { width: auto; }
 
   /* API log: full width below content, own scroll */
