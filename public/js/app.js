@@ -671,33 +671,102 @@ function formatBrand(brand) {
 }
 
 // ====================== Terminal List ======================
+// The models Adyen currently sells, keyed by the model part of a POI ID. The family
+// only decides which outline is drawn: the exact casing matters far less than being
+// able to tell a countertop unit from something the staff carry around.
+const TERMINAL_MODELS = {
+  AMS1:  { label: 'AMS1',       family: 'mobile',     tagline: 'All-in-one Android terminal' },
+  SFO1:  { label: 'Adyen SFO1', family: 'countertop', tagline: 'Payments, branding and engagement' },
+  E285:  { label: 'e285',       family: 'reader',     tagline: 'Pocket-sized, for personal shopping' },
+  S1U2:  { label: 'S1U2',       family: 'unattended', tagline: 'All-in-one unattended Android device' },
+  P630:  { label: 'P630',       family: 'countertop', tagline: 'Premium design, ultra-reliable' },
+  V400M: { label: 'V400m',      family: 'printer',    tagline: 'Portable, with fast printing' },
+  V240M: { label: 'V240m Plus', family: 'printer',    tagline: 'Portable and always connected' },
+  V400C: { label: 'V400c Plus', family: 'countertop', tagline: 'Countertop, with added printer' },
+  S1F2:  { label: 'S1F2',       family: 'printer',    tagline: 'All-in-one Android with printing power' },
+  S1E2L: { label: 'S1E2L',      family: 'mobile',     tagline: 'Sleek, durable, mobile Android' },
+  NYC1:  { label: 'NYC1',       family: 'reader',     tagline: 'Card reader for businesses on the move' },
+  M450:  { label: 'M450',       family: 'countertop', tagline: 'Impact, insights and two-way interactions' },
+  S1E4:  { label: 'S1E4 Pro',   family: 'mobile',     tagline: 'Drop-, dust- and splash-proof' },
+  S1F4:  { label: 'S1F4 Pro',   family: 'printer',    tagline: 'Smart and portable, with a printer' }
+};
+
+// Line art rather than product photography: it stays legible at this size, needs no
+// network, and cannot go stale when a model is refreshed.
+const TERMINAL_ART = {
+  mobile: '<rect x="9" y="3" width="22" height="50" rx="5"/><rect x="13" y="9" width="14" height="19" rx="2"/><circle cx="20" cy="41" r="2"/>',
+  printer: '<rect x="9" y="3" width="22" height="50" rx="5"/><path d="M13 8h14"/><rect x="13" y="14" width="14" height="17" rx="2"/><circle cx="20" cy="43" r="2"/>',
+  countertop: '<rect x="7" y="6" width="26" height="31" rx="4"/><rect x="11" y="11" width="18" height="14" rx="2"/><circle cx="20" cy="31" r="2"/><path d="M15 37v8M25 37v8M10 49h20"/>',
+  unattended: '<rect x="7" y="8" width="26" height="40" rx="4"/><rect x="11" y="13" width="18" height="15" rx="2"/><path d="M13 37h10"/><path d="M31 22v10" stroke-width="3"/>',
+  reader: '<rect x="10" y="14" width="20" height="28" rx="6"/><rect x="14" y="19" width="12" height="9" rx="2"/><path d="M17 35h6"/>'
+};
+
+// Splits "V400m-346536527" into the model it describes and the serial that follows.
+// Unknown models still render: the label falls back to whatever the POI ID carries,
+// so a terminal added before this list was updated is not left blank.
+function terminalModelInfo(poiId) {
+  const text = String(poiId || '');
+  const dash = text.indexOf('-');
+  const rawModel = dash > 0 ? text.slice(0, dash) : text;
+  const serial = dash > 0 ? text.slice(dash + 1) : '';
+  const key = rawModel.toUpperCase();
+  // Longest match first so S1E2L is not claimed by a shorter S1E2 entry.
+  const match = TERMINAL_MODELS[key] || TERMINAL_MODELS[
+    Object.keys(TERMINAL_MODELS).filter(k => key.startsWith(k)).sort((a, b) => b.length - a.length)[0]
+  ];
+  return {
+    label: match?.label || rawModel || 'Terminal',
+    family: match?.family || 'mobile',
+    tagline: match?.tagline || '',
+    serial
+  };
+}
+
 function renderTerminals() {
   const list = state.config.terminals || [];
   if (list.length === 0) {
     $terminalList.innerHTML = '<div class="terminal-empty">No terminals added</div>';
+    state.config.poiId = '';
     state.terminalOnline = false;
     renderProducts();
     renderOrders();
     return;
   }
+
   const onlineSet = state._terminalOnlineSet || new Set();
-  $terminalList.innerHTML = list.map(t => {
-    const online = onlineSet.has(t.poiId);
-    const checked = state._terminalChecked;
-    return `
-    <div class="terminal-item ${t.active ? 'active' : ''}">
-      ${checked ? `<span class="terminal-status-dot ${online ? 'online' : 'offline'}">${online ? 'Online' : 'Offline'}</span>` : ''}
-      <div class="terminal-item-row">
-        <button class="terminal-select-btn" onclick="selectTerminal('${t.poiId}')" title="Set as active">
-          <span class="terminal-radio ${t.active ? 'checked' : ''}"></span>
-          <span class="terminal-poi-id">${t.poiId}</span>
-        </button>
-        <button class="terminal-delete-btn" onclick="deleteTerminal('${t.poiId}')" title="Remove">✕</button>
-      </div>
-    </div>`;
+  const checked = state._terminalChecked;
+  const active = list.find(t => t.active) || list[0];
+  const info = terminalModelInfo(active.poiId);
+  const online = onlineSet.has(active.poiId);
+
+  const options = list.map(t => {
+    const opt = terminalModelInfo(t.poiId);
+    const mark = checked && !onlineSet.has(t.poiId) ? ' (offline)' : '';
+    return `<option value="${t.poiId}"${t.poiId === active.poiId ? ' selected' : ''}>${opt.label} · ${opt.serial}${mark}</option>`;
   }).join('');
-  const active = list.find(t => t.active);
-  state.config.poiId = active ? active.poiId : '';
+
+  $terminalList.innerHTML = `
+    <select id="terminal-select" class="terminal-select" aria-label="Active terminal">${options}</select>
+    <div class="terminal-card">
+      <div class="terminal-thumb">
+        <svg viewBox="0 0 40 56" fill="none" stroke="currentColor" stroke-width="1.6"
+             stroke-linecap="round" stroke-linejoin="round">${TERMINAL_ART[info.family]}</svg>
+      </div>
+      <div class="terminal-meta">
+        <div class="terminal-model-row">
+          <span class="terminal-model">${info.label}</span>
+          ${checked ? `<span class="terminal-status-dot ${online ? 'online' : 'offline'}">${online ? 'Online' : 'Offline'}</span>` : ''}
+        </div>
+        ${info.serial ? `<div class="terminal-serial">${info.serial}</div>` : ''}
+        ${info.tagline ? `<div class="terminal-tagline">${info.tagline}</div>` : ''}
+      </div>
+      <button class="terminal-delete-btn" onclick="deleteTerminal('${active.poiId}')" title="Remove this terminal">✕</button>
+    </div>`;
+
+  document.getElementById('terminal-select')
+    .addEventListener('change', e => selectTerminal(e.target.value));
+
+  state.config.poiId = active.poiId;
   state.terminalOnline = !!active;
   renderProducts();
   renderOrders();
