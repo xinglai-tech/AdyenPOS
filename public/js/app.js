@@ -726,12 +726,19 @@ function terminalDisplayName(poiId) {
   return terminalModelInfo(poiId).title || poiId || 'Unknown terminal';
 }
 
-function showTerminalMismatchPopup(orderTerminalId) {
-  const activePoiId = state.config.poiId || '';
+function showTerminalMismatchPopup(orderTerminalId, reason = 'mismatch') {
   const orderName = terminalDisplayName(orderTerminalId);
+  const activePoiId = state.config.poiId || '';
   const activeName = activePoiId ? terminalDisplayName(activePoiId) : 'No terminal selected';
-  $terminalMismatchMessage.textContent =
-    `This order was processed on ${orderName}. Please switch the Current terminal to that device. Current terminal: ${activeName}.`;
+  let message;
+  if (reason === 'deleted') {
+    message = `The terminal used for this order (${orderName}) is no longer in the Current terminal list. Add it again to refund or reprint the receipt.`;
+  } else if (reason === 'offline') {
+    message = `The terminal used for this order (${orderName}) is offline. Bring it online before refunding or reprinting the receipt.`;
+  } else {
+    message = `This order was processed on ${orderName}. Please switch the Current terminal to that device. Current terminal: ${activeName}.`;
+  }
+  $terminalMismatchMessage.textContent = message;
   $terminalMismatchPopup.classList.remove('hidden');
 }
 
@@ -743,8 +750,23 @@ function ensureTerminalMatch(order) {
   // Old orders may not record a terminalId; allow those through rather than
   // blocking otherwise-valid refund/reprint actions.
   if (!order || !order.terminalId) return true;
+
+  const terminals = state.config.terminals || [];
+  const orderTerminal = terminals.find(t => t.poiId === order.terminalId);
+  if (!orderTerminal) {
+    showTerminalMismatchPopup(order.terminalId, 'deleted');
+    return false;
+  }
+
+  const onlineSet = state._terminalOnlineSet;
+  const isOffline = onlineSet && !onlineSet.has(order.terminalId);
+  if (isOffline) {
+    showTerminalMismatchPopup(order.terminalId, 'offline');
+    return false;
+  }
+
   if (order.terminalId !== state.config.poiId) {
-    showTerminalMismatchPopup(order.terminalId);
+    showTerminalMismatchPopup(order.terminalId, 'mismatch');
     return false;
   }
   return true;
