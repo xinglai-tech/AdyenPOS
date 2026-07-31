@@ -319,7 +319,7 @@ const ADYEN_LOOKUP_TIMEOUT_MS = 10000;
 // there is no cardholder to wait for: if the device is going to answer at all it
 // does so in seconds. Waiting the full interactive deadline for these only leaves
 // the cashier staring at a spinner.
-const ADYEN_UNATTENDED_TIMEOUT_MS = Number(process.env.ADYEN_UNATTENDED_TIMEOUT_MS) || 30000;
+const ADYEN_UNATTENDED_TIMEOUT_MS = Number(process.env.ADYEN_UNATTENDED_TIMEOUT_MS) || 15000;
 
 async function adyenRequest(endpoint, body, opts = {}) {
   // Mirror the outgoing request to the API log. Done here rather than at each call
@@ -347,7 +347,7 @@ async function adyenRequest(endpoint, body, opts = {}) {
     // A timeout means the outcome is unknown, not that the request failed, so say
     // so plainly: callers must not record it as a decline.
     if (err.name === 'TimeoutError' || err.name === 'AbortError') {
-      const timeoutError = new Error(`The terminal did not respond within ${Math.round(timeoutMs / 1000)}s, so the outcome is unknown`);
+      const timeoutError = new Error(`The terminal did not respond within ${Math.round(timeoutMs / 1000)}s, please retry when the terminal is online.`);
       timeoutError.code = 'ADYEN_TIMEOUT';
       throw timeoutError;
     }
