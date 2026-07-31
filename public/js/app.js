@@ -726,19 +726,25 @@ function terminalDisplayName(poiId) {
   return terminalModelInfo(poiId).title || poiId || 'Unknown terminal';
 }
 
+// Built from nodes rather than a template string so the terminal name can carry
+// its own element: it is bold, and `white-space: nowrap` keeps a model/serial
+// pair from being split across two lines.
 function showTerminalMismatchPopup(orderTerminalId, reason = 'mismatch') {
-  const orderName = terminalDisplayName(orderTerminalId);
-  const activePoiId = state.config.poiId || '';
-  const activeName = activePoiId ? terminalDisplayName(activePoiId) : 'No terminal selected';
-  let message;
-  if (reason === 'deleted') {
-    message = `The terminal used for this order (${orderName}) is no longer in the Current terminal list. Add it again to refund or reprint the receipt.`;
-  } else if (reason === 'offline') {
-    message = `The terminal used for this order (${orderName}) is offline. Bring it online before refunding or reprinting the receipt.`;
-  } else {
-    message = `This order was processed on ${orderName}. Please switch the Current terminal to that device. Current terminal: ${activeName}.`;
-  }
-  $terminalMismatchMessage.textContent = message;
+  const name = document.createElement('strong');
+  name.className = 'mismatch-terminal';
+  name.textContent = terminalDisplayName(orderTerminalId);
+
+  const tail = reason === 'deleted'
+    ? ', which is no longer in the terminal list. Add it again to continue'
+    : reason === 'offline'
+      ? ', which is offline. Bring it online to continue'
+      : '. Please switch the Current terminal to that device';
+
+  $terminalMismatchMessage.replaceChildren(
+    document.createTextNode('This order was processed on '),
+    name,
+    document.createTextNode(tail)
+  );
   $terminalMismatchPopup.classList.remove('hidden');
 }
 

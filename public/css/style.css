@@ -1350,31 +1350,40 @@ html, body {
    bottom action bar. It sits above overlays and toast just in case. */
 #terminal-mismatch-popup {
   position: fixed;
-  top: 24px;
+  top: 20px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 1600;
-  width: min(90vw, 360px);
+  /* Wide enough that the model/serial pair fits on one line, no wider. */
+  width: max-content;
+  max-width: min(88vw, 300px);
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 20px 22px;
+  border-radius: 14px;
+  padding: 14px 16px;
   text-align: center;
-  box-shadow: 0 20px 60px rgba(0,0,0,.2);
+  box-shadow: 0 10px 30px rgba(0,0,0,.14);
 }
 #terminal-mismatch-popup .mismatch-title {
-  font-size: .92rem;
-  font-weight: 700;
-  margin-bottom: 8px;
-  color: var(--danger);
+  font-size: .82rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text);
 }
 #terminal-mismatch-popup .mismatch-message {
-  font-size: .8rem;
-  color: var(--text);
-  line-height: 1.5;
-  margin: 0 0 14px;
+  font-size: .75rem;
+  color: var(--text-light);
+  line-height: 1.55;
+  margin: 0 0 12px;
 }
-#terminal-mismatch-popup .btn { padding: 8px 20px; font-size: .8rem; }
+/* Keeps "S1F2 - 000158251517655" intact: without this the space around the dash
+   is a valid break point, so the serial can end up alone on the next line. */
+#terminal-mismatch-popup .mismatch-terminal {
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text);
+}
+#terminal-mismatch-popup .btn { padding: 6px 18px; font-size: .75rem; }
 
 /* Spinner */
 .spinner {
