@@ -200,10 +200,6 @@ const $refundModal     = document.getElementById('refund-modal');
 const $btnRefundOk     = document.getElementById('btn-refund-confirm');
 const $btnRefundCancel = document.getElementById('btn-refund-cancel');
 
-// Terminal mismatch popup
-const $terminalMismatchPopup = document.getElementById('terminal-mismatch-popup');
-const $terminalMismatchMessage = document.getElementById('terminal-mismatch-message');
-const $btnMismatchClose = document.getElementById('btn-mismatch-close');
 
 // ====================== Init ======================
 let _sseReady = false;
@@ -274,13 +270,6 @@ function setupSSE() {
     const { category, endpoint, payload } = JSON.parse(e.data);
     const route = String(endpoint || '').split('/').pop();
     showApiResponse(route ? `${category} · ${route}` : category, payload, 'request');
-  });
-
-  // For calls the server makes on its own initiative, where no fetch on this page
-  // returns the answer that could otherwise be logged at the call site.
-  es.addEventListener('apiResponse', (e) => {
-    const { label, payload } = JSON.parse(e.data);
-    showApiResponse(label || 'Response', payload);
   });
 
   es.addEventListener('ordersCleared', () => {
@@ -566,6 +555,36 @@ function renderCart() {
 // it went through, was declined or is only partial, does not undo that fact.
 const PAID_STATUSES = new Set(['paid', 'partially_refunded', 'refunded', 'refund_failed']);
 
+// Why this order's terminal actions cannot be used, or null when they can. Every
+// action on a card is bound to the terminal that took the payment, so the answer is
+// per order and not per till: an order from another terminal is unusable even while
+// the selected one is perfectly healthy.
+function orderActionBlock(order) {
+  const poiId = order.terminalId;
+  if (!poiId) return state.terminalOnline ? null : 'The current terminal is offline';
+
+  const name = terminalDisplayName(poiId);
+  const known = (state.config.terminals || []).some(t => t.poiId === poiId);
+  if (!known) return `${name} is no longer in the terminal list. Add it again to use this order.`;
+  // Only trust the online set once a check has actually run, otherwise every order
+  // would look unusable until the first one completes.
+  if (state._terminalChecked && !state._terminalOnlineSet.has(poiId)) {
+    return `${name} is offline. Bring it online to use this order.`;
+  }
+  if (poiId !== state.config.poiId) {
+    return `This order was taken on ${name}. Switch the current terminal to it first.`;
+  }
+  return null;
+}
+
+// A disabled button receives no pointer events, so the tip has to live on a wrapper
+// around it rather than on the button itself.
+function withActionTip(buttonHtml, tip) {
+  if (!tip) return buttonHtml;
+  const safe = tip.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  return `<span class="action-tip" data-tip="${safe}">${buttonHtml}</span>`;
+}
+
 function renderOrders() {
   const cur = state.config.currency || 'EUR';
   $orderCount.textContent = state.orders.length;
@@ -598,6 +617,8 @@ function renderOrders() {
     // refund, or a refund that failed, does not invalidate the original receipt.
     const paymentSucceeded = PAID_STATUSES.has(o.status);
     const canReprint = paymentSucceeded && !o.viaTapToPay && terminalHasPrinter(o.terminalId);
+    const blocked = orderActionBlock(o);
+    const off = blocked ? ' disabled' : '';
 
     return `
       <div class="order-card">
@@ -616,13 +637,13 @@ function renderOrders() {
         </div>
         ${o.status === 'pending' && !o.viaTapToPay ? `
           <div class="order-card-actions">
-            <button class="btn-check-order" onclick="queryOrderStatus('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}><i data-lucide="search"></i>Check Status</button>
-            <button class="btn-cancel-order" onclick="cancelOrder('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}><i data-lucide="x"></i>Cancel</button>
+            ${withActionTip(`<button class="btn-check-order" onclick="queryOrderStatus('${o.serviceId}', this)"${off}><i data-lucide="search"></i>Check Status</button>`, blocked)}
+            ${withActionTip(`<button class="btn-cancel-order" onclick="cancelOrder('${o.serviceId}', this)"${off}><i data-lucide="x"></i>Cancel</button>`, blocked)}
           </div>` : ''}
         ${canRefund || canReprint ? `
           <div class="order-card-actions">
-            ${canRefund ? `<button class="btn-refund" onclick="promptRefund('${o.id}')" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}><i data-lucide="rotate-ccw"></i>Refund</button>` : ''}
-            ${canReprint ? `<button class="btn-reprint" onclick="reprintReceipt('${o.serviceId}', this)" ${!state.terminalOnline ? 'disabled title="Terminal offline"' : ''}><i data-lucide="printer"></i>Print Receipt</button>` : ''}
+            ${canRefund ? withActionTip(`<button class="btn-refund" onclick="promptRefund('${o.id}')"${off}><i data-lucide="rotate-ccw"></i>Refund</button>`, blocked) : ''}
+            ${canReprint ? withActionTip(`<button class="btn-reprint" onclick="reprintReceipt('${o.serviceId}', this)"${off}><i data-lucide="printer"></i>Print Receipt</button>`, blocked) : ''}
           </div>` : ''}
       </div>
     `;
@@ -744,9 +765,9 @@ function terminalDisplayName(poiId) {
 // Built from nodes rather than a template string so the terminal name can carry
 // its own element: it is bold, and `white-space: nowrap` keeps a model/serial
 // pair from being split across two lines.
-function showTerminalMismatchPopup(orderTerminalId, reason = 'mismatch') {
+function showTerminalMismatchBanner(orderTerminalId, reason = 'mismatch') {
   const name = document.createElement('strong');
-  name.className = 'mismatch-terminal';
+  name.className = 'banner-terminal';
   name.textContent = terminalDisplayName(orderTerminalId);
 
   const tail = reason === 'deleted'
@@ -755,16 +776,13 @@ function showTerminalMismatchPopup(orderTerminalId, reason = 'mismatch') {
       ? ', which is offline. Bring it online to continue'
       : '. Please switch the Current terminal to that device';
 
-  $terminalMismatchMessage.replaceChildren(
+  // Held a second longer than a normal banner: it names a specific device the
+  // reader has to match against the terminal picker before acting on it.
+  showBanner([
     document.createTextNode('This order was processed on '),
     name,
     document.createTextNode(tail)
-  );
-  $terminalMismatchPopup.classList.remove('hidden');
-}
-
-function closeTerminalMismatchPopup() {
-  $terminalMismatchPopup.classList.add('hidden');
+  ], 'warning', 6000);
 }
 
 // The server refuses terminal-bound requests it knows cannot be delivered, and
@@ -788,19 +806,19 @@ function ensureTerminalMatch(order) {
   const terminals = state.config.terminals || [];
   const orderTerminal = terminals.find(t => t.poiId === order.terminalId);
   if (!orderTerminal) {
-    showTerminalMismatchPopup(order.terminalId, 'deleted');
+    showTerminalMismatchBanner(order.terminalId, 'deleted');
     return false;
   }
 
   const onlineSet = state._terminalOnlineSet;
   const isOffline = onlineSet && !onlineSet.has(order.terminalId);
   if (isOffline) {
-    showTerminalMismatchPopup(order.terminalId, 'offline');
+    showTerminalMismatchBanner(order.terminalId, 'offline');
     return false;
   }
 
   if (order.terminalId !== state.config.poiId) {
-    showTerminalMismatchPopup(order.terminalId, 'mismatch');
+    showTerminalMismatchBanner(order.terminalId, 'mismatch');
     return false;
   }
   return true;
@@ -2255,15 +2273,23 @@ function showFloatingToast(msg, type = 'info', duration = 2000) {
   }, duration);
 }
 
-function showToast(msg, type = 'info', duration = 5000) {
+// `content` is either a string or a list of nodes, for the callers that need part
+// of the message emphasised. The idle class is restored rather than the bar being
+// hidden, so the layout does not shift as messages come and go.
+function showBanner(content, type = 'info', duration = 5000) {
   const bar = document.getElementById('notification-bar');
-  bar.textContent = msg;
+  if (Array.isArray(content)) bar.replaceChildren(...content);
+  else bar.textContent = content;
   bar.className = `notification-bar notification-${type}`;
   clearTimeout(bar._timer);
   bar._timer = setTimeout(() => {
     bar.textContent = '\u00A0';
     bar.className = 'notification-bar notification-idle';
   }, duration);
+}
+
+function showToast(msg, type = 'info', duration = 5000) {
+  showBanner(msg, type, duration);
 }
 
 // ====================== Event Binding ======================
@@ -2360,7 +2386,6 @@ function bindEvents() {
 
   // Refund modal
   $btnRefundOk.addEventListener('click', executeRefund);
-  $btnMismatchClose.addEventListener('click', closeTerminalMismatchPopup);
   $btnRefundCancel.addEventListener('click', () => {
     setRefundModalState('input');
     $refundModal.classList.add('hidden');

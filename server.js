@@ -319,17 +319,21 @@ const ADYEN_LOOKUP_TIMEOUT_MS = 10000;
 // there is no cardholder to wait for: if the device is going to answer at all it
 // does so in seconds. Waiting the full interactive deadline for these only leaves
 // the cashier staring at a spinner.
-const ADYEN_UNATTENDED_TIMEOUT_MS = Number(process.env.ADYEN_UNATTENDED_TIMEOUT_MS) || 15000;
+const ADYEN_UNATTENDED_TIMEOUT_MS = Number(process.env.ADYEN_UNATTENDED_TIMEOUT_MS) || 10000;
 
 async function adyenRequest(endpoint, body, opts = {}) {
   // Mirror the outgoing request to the API log. Done here rather than at each call
   // site because every Terminal API call funnels through this function, so one
   // broadcast covers payments, card acquisition, printing, aborts and the rest.
-  broadcastSSE('apiRequest', {
-    category: body?.SaleToPOIRequest?.MessageHeader?.MessageCategory || 'Request',
-    endpoint,
-    payload: body
-  });
+  // `silent` is for housekeeping calls the user never asked for, which would
+  // otherwise bury the request they did ask for.
+  if (!opts.silent) {
+    broadcastSSE('apiRequest', {
+      category: body?.SaleToPOIRequest?.MessageHeader?.MessageCategory || 'Request',
+      endpoint,
+      payload: body
+    });
+  }
 
   const timeoutMs = opts.timeoutMs || ADYEN_TIMEOUT_MS;
   let res;
@@ -370,14 +374,14 @@ async function adyenRequest(endpoint, body, opts = {}) {
 const CONNECTED_CACHE_MS = 5000;
 let _connectedCache = { data: null, at: 0 };
 
-async function fetchConnectedTerminals({ force = false } = {}) {
+async function fetchConnectedTerminals({ force = false, silent = false } = {}) {
   if (!force && _connectedCache.data && Date.now() - _connectedCache.at < CONNECTED_CACHE_MS) {
     return _connectedCache.data;
   }
   const data = await adyenRequest(
     'https://terminal-api-test.adyen.com/connectedTerminals',
     { merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT || '' },
-    { timeoutMs: ADYEN_LOOKUP_TIMEOUT_MS }
+    { timeoutMs: ADYEN_LOOKUP_TIMEOUT_MS, silent }
   );
   _connectedCache = { data, at: Date.now() };
   return data;
@@ -389,20 +393,10 @@ async function fetchConnectedTerminals({ force = false } = {}) {
 async function terminalUnreachableReason(poiId) {
   if (!poiId) return { error: 'No terminal is selected' };
   try {
-    const ids = (await fetchConnectedTerminals())?.uniqueTerminalIds || [];
-    const online = ids.includes(poiId);
-    // Mirrored to the API log because this call is made by the server on its own
-    // initiative: without it the log shows the request with no answer, and there
-    // is no way to tell "Adyen says it is online" from "the lookup itself failed".
-    broadcastSSE('apiResponse', {
-      label: 'Preflight · connectedTerminals',
-      payload: {
-        poiId,
-        verdict: online ? 'online — request will be sent' : 'offline — request refused',
-        uniqueTerminalIds: ids
-      }
-    });
-    if (online) return null;
+    // Silent: this lookup is the server's own bookkeeping, and logging it would put
+    // a request the user never made above the one they are waiting on.
+    const ids = (await fetchConnectedTerminals({ silent: true }))?.uniqueTerminalIds || [];
+    if (ids.includes(poiId)) return null;
     console.log(`[Preflight] ${poiId} is not in connectedTerminals (${ids.length} online), refusing the request`);
     return {
       error: `${poiId} is not connected, so the request was not sent to it. Bring the terminal online and try again.`,
@@ -412,10 +406,6 @@ async function terminalUnreachableReason(poiId) {
     };
   } catch (err) {
     console.warn('[Preflight] connectedTerminals lookup failed, continuing:', err.message);
-    broadcastSSE('apiResponse', {
-      label: 'Preflight · connectedTerminals',
-      payload: { poiId, verdict: 'lookup failed — request sent anyway', error: err.message }
-    });
     return null;
   }
 }

@@ -181,6 +181,45 @@ html, body {
   gap: 6px;
   margin-top: 8px;
 }
+
+/* Wraps a disabled action so it can still be hovered, and so it keeps the
+   `flex: 1` share of the row that the button itself would have taken. */
+.action-tip {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+/* Placed above the button: the actions are the last thing on a card, so a tip
+   below would be clipped by the bottom of the scrolling order list. */
+.action-tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) translateY(3px);
+  z-index: 20;
+  width: max-content;
+  max-width: 200px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: rgba(20,20,22,.96);
+  border: 1px solid rgba(255,255,255,.14);
+  color: rgba(255,255,255,.9);
+  font-size: .68rem;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: center;
+  white-space: normal;
+  box-shadow: 0 6px 18px rgba(0,0,0,.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease, transform .15s ease;
+}
+.action-tip:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
 .btn-check-order, .btn-cancel-order {
   flex: 1;
   padding: 7px 0;
@@ -1345,46 +1384,6 @@ html, body {
 
 .overlay-actions { display: flex; gap: 12px; justify-content: center; margin-top: 20px; }
 
-/* ============ Terminal mismatch popup ============ */
-/* A small, fixed popup rather than a full-screen overlay, so it never covers the
-   bottom action bar. It sits above overlays and toast just in case. */
-#terminal-mismatch-popup {
-  position: fixed;
-  top: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1600;
-  /* Wide enough that the model/serial pair fits on one line, no wider. */
-  width: max-content;
-  max-width: min(88vw, 300px);
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 14px 16px;
-  text-align: center;
-  box-shadow: 0 10px 30px rgba(0,0,0,.14);
-}
-#terminal-mismatch-popup .mismatch-title {
-  font-size: .82rem;
-  font-weight: 600;
-  margin-bottom: 6px;
-  color: var(--text);
-}
-#terminal-mismatch-popup .mismatch-message {
-  font-size: .75rem;
-  color: var(--text-light);
-  line-height: 1.55;
-  margin: 0 0 12px;
-}
-/* Keeps "S1F2 - 000158251517655" intact: without this the space around the dash
-   is a valid break point, so the serial can end up alone on the next line. */
-#terminal-mismatch-popup .mismatch-terminal {
-  white-space: nowrap;
-  font-weight: 600;
-  color: var(--text);
-}
-#terminal-mismatch-popup .btn { padding: 6px 18px; font-size: .75rem; }
-
 /* Spinner */
 .spinner {
   width: 44px; height: 44px;
@@ -1453,6 +1452,14 @@ html, body {
 .notification-error   { background: rgba(255,59,48,.12); color: var(--danger); border: 1px solid rgba(255,59,48,.2); }
 .notification-info    { background: rgba(0,113,227,.1); color: var(--primary); border: 1px solid rgba(0,113,227,.15); }
 .notification-warning { background: rgba(255,149,0,.12); color: var(--warning); border: 1px solid rgba(255,149,0,.2); }
+
+/* Keeps "S1F2 - 000158251517655" intact: without this the space around the dash
+   is a valid break point, so the serial can end up alone on the next line. The
+   bar is already 600, so the name needs 700 to read as emphasised. */
+.notification-bar .banner-terminal {
+  white-space: nowrap;
+  font-weight: 700;
+}
 
 @keyframes notifFadeIn {
   from { opacity: 0; transform: translateY(-4px); }
