@@ -8,6 +8,9 @@ assets/receipt-settings.json
 # Loyalty members edited at runtime; assets/members.default.json is the seed data.
 assets/members.json
 
+# Local fallback for the order store, used when no storage account is configured.
+assets/orders.json
+
 # Self-signed certificate for local HTTPS; regenerate with `npm run certs`.
 certs/
 

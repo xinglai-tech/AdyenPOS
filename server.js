@@ -8,11 +8,15 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const nexoCrypto = require('./nexoCrypto');
 const { readInputResult, readEnableServiceResult } = require('./nexoParse');
+const orderStore = require('./orderStore');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// --------------- In-memory storage (swap to Azure Storage later) ---------------
+// --------------- In-memory storage ---------------
+// The working set. Orders are read synchronously all over this file, so the array
+// stays authoritative for reads and `orderStore` mirrors every change behind it.
+// Filled from storage at boot, before the server starts listening.
 let orders = [];
 let sseClients = [];
 const MAX_TERMINALS = 5;
@@ -295,6 +299,15 @@ function extractPaymentBrand(paymentResponse) {
 function broadcastSSE(event, data) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   sseClients.forEach(c => c.write(payload));
+}
+
+// Every order change goes through here. Telling the clients and writing the order
+// down are the same event, so keeping them together means a new code path cannot
+// remember one and forget the other. The write is deliberately not awaited: the
+// cashier is watching a terminal, not a storage account.
+function orderChanged(order) {
+  broadcastSSE('orderUpdate', order);
+  orderStore.save(order);
 }
 
 function makeHeader(category, messageType = 'Request') {
@@ -584,7 +597,7 @@ app.post('/api/transaction-status', async (req, res) => {
         order.pspReference = extractPspReference(paymentResponse);
         order.tenderReference = extractTenderReference(paymentResponse);
         order.paymentBrand = extractPaymentBrand(paymentResponse);
-        broadcastSSE('orderUpdate', order);
+        orderChanged(order);
       }
     }
 
@@ -1046,11 +1059,14 @@ app.post('/api/reprint-receipt', async (req, res) => {
 });
 
 // --------------- API: Clear Orders ---------------
-app.delete('/api/orders', (req, res) => {
+app.delete('/api/orders', async (req, res) => {
   orders.length = 0;
   // A dedicated event, not `init`: clients treat `init` as a reconnect snapshot
   // and merge it, so an empty `init` would no longer clear their list.
   broadcastSSE('ordersCleared', {});
+  // Awaited, unlike an ordinary change: without it a reload could bring back the
+  // orders that were just cleared, which looks like the button did nothing.
+  await orderStore.clear();
   res.json({ status: 'cleared' });
 });
 
@@ -1551,7 +1567,7 @@ app.post('/api/payment', async (req, res) => {
     ...(redemption ? { loyalty: redemption } : {})
   };
   orders.unshift(order);
-  broadcastSSE('orderUpdate', order);
+  orderChanged(order);
 
   const endpoint = useAsync
     ? 'https://terminal-api-test.adyen.com/async'
@@ -1623,14 +1639,14 @@ app.post('/api/payment', async (req, res) => {
     order.tenderReference = extractTenderReference(paymentResp);
     order.paymentBrand = extractPaymentBrand(paymentResp);
 
-    broadcastSSE('orderUpdate', order);
+    orderChanged(order);
     try { res.json({ order, adyenResponse: data }); } catch (_) { /* client may have disconnected */ }
   } catch (err) {
     if (order.status !== 'cancelled') {
       order.status = 'error';
       order.error = err.message;
     }
-    broadcastSSE('orderUpdate', order);
+    orderChanged(order);
     try { res.status(500).json({ error: err.message, orderId: transactionId }); } catch (_) { /* client disconnected */ }
   }
 });
@@ -1666,7 +1682,7 @@ app.post('/api/cancel', async (req, res) => {
     if (cancelledOrder) {
       cancelledOrder.status = 'cancelled';
       cancelledOrder.cancelResponse = data;
-      broadcastSSE('orderUpdate', cancelledOrder);
+      orderChanged(cancelledOrder);
     }
     res.json(data);
   } catch (err) {
@@ -1731,7 +1747,7 @@ app.post('/api/refund', async (req, res) => {
       order.status = 'refund_failed';
     }
     order.refundResponse = data;
-    broadcastSSE('orderUpdate', order);
+    orderChanged(order);
     res.json({ order, adyenResponse: data });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1789,7 +1805,7 @@ app.post('/api/refund/unreferenced', async (req, res) => {
       order.status = 'refund_failed';
     }
     order.refundResponse = data;
-    broadcastSSE('orderUpdate', order);
+    orderChanged(order);
     res.json({ order, adyenResponse: data });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1901,7 +1917,7 @@ app.post('/api/taptopay/payment-request', async (req, res) => {
       refundedAmount: 0
     };
     orders.unshift(order);
-    broadcastSSE('orderUpdate', order);
+    orderChanged(order);
 
     res.json({ request, serviceId, transactionId });
   } catch (err) {
@@ -2003,7 +2019,7 @@ app.post('/api/taptopay/payment-result', async (req, res) => {
           order.tenderReference = extractTenderReference(paymentResponse);
           order.paymentBrand = extractPaymentBrand(paymentResponse);
         }
-        broadcastSSE('orderUpdate', order);
+        orderChanged(order);
       }
 
       return res.json({
@@ -2048,7 +2064,7 @@ app.post('/api/taptopay/payment-result', async (req, res) => {
       order.pspReference = extractPspReference(paymentResponse);
       order.tenderReference = extractTenderReference(paymentResponse);
       order.paymentBrand = extractPaymentBrand(paymentResponse);
-      broadcastSSE('orderUpdate', order);
+      orderChanged(order);
     }
 
     res.json({
@@ -2171,7 +2187,7 @@ app.post('/api/webhook', (req, res) => {
         order.pspReference = extractPspReference(paymentResponse);
         order.tenderReference = extractTenderReference(paymentResponse);
         order.paymentBrand = extractPaymentBrand(paymentResponse);
-        broadcastSSE('orderUpdate', order);
+        orderChanged(order);
       }
     }
 
@@ -2215,7 +2231,7 @@ app.post('/api/webhook', (req, res) => {
           order.failureReason = message || 'Timed out waiting for terminal response';
           order.response = body;
           console.log(`[Webhook] Order ${order.id} marked failed (Reject): ${order.failureReason}`);
-          broadcastSSE('orderUpdate', order);
+          orderChanged(order);
         }
       }
     }
@@ -2308,6 +2324,12 @@ const server = tlsOptions
   ? https.createServer({ ...serverOptions, ...tlsOptions }, app)
   : http.createServer(serverOptions, app);
 
-server.listen(PORT, () => {
-  console.log(`POS Web App running at ${tlsOptions ? 'https' : 'http'}://localhost:${PORT}`);
+// Orders are read back before the first request is served, so a client that
+// connects immediately after a restart gets the real list rather than an empty one
+// it would then have to be corrected out of.
+orderStore.load().then(stored => {
+  orders = stored;
+  server.listen(PORT, () => {
+    console.log(`POS Web App running at ${tlsOptions ? 'https' : 'http'}://localhost:${PORT}`);
+  });
 });
