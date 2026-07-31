@@ -315,6 +315,11 @@ function makeHeader(category, messageType = 'Request') {
 // should answer immediately) pass a much shorter `timeoutMs`.
 const ADYEN_TIMEOUT_MS = Number(process.env.ADYEN_REQUEST_TIMEOUT_MS) || 130000;
 const ADYEN_LOOKUP_TIMEOUT_MS = 10000;
+// Reversals, prints and status lookups run without anyone at the terminal, so
+// there is no cardholder to wait for: if the device is going to answer at all it
+// does so in seconds. Waiting the full interactive deadline for these only leaves
+// the cashier staring at a spinner.
+const ADYEN_UNATTENDED_TIMEOUT_MS = Number(process.env.ADYEN_UNATTENDED_TIMEOUT_MS) || 30000;
 
 async function adyenRequest(endpoint, body, opts = {}) {
   // Mirror the outgoing request to the API log. Done here rather than at each call
@@ -386,6 +391,7 @@ async function terminalUnreachableReason(poiId) {
   try {
     const ids = (await fetchConnectedTerminals())?.uniqueTerminalIds || [];
     if (ids.includes(poiId)) return null;
+    console.log(`[Preflight] ${poiId} is not in connectedTerminals (${ids.length} online), refusing the request`);
     return {
       error: `${poiId} is not connected, so the request was not sent to it. Bring the terminal online and try again.`,
       terminalOffline: true,
@@ -543,7 +549,7 @@ app.post('/api/transaction-status', async (req, res) => {
   };
 
   try {
-    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
+    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload, { timeoutMs: ADYEN_UNATTENDED_TIMEOUT_MS });
 
     // If Adyen returns a completed payment result, update the order
     const statusResponse = data?.SaleToPOIResponse?.TransactionStatusResponse;
@@ -825,7 +831,7 @@ async function sendPrintContent(poiId, outputContent, documentQualifier = 'Docum
         }
       }
     }
-  });
+  }, { timeoutMs: ADYEN_UNATTENDED_TIMEOUT_MS });
 }
 
 // --------------- API: Receipt Settings ---------------
@@ -972,7 +978,7 @@ app.post('/api/reprint-receipt', async (req, res) => {
             }
           }
         }
-      });
+      }, { timeoutMs: ADYEN_UNATTENDED_TIMEOUT_MS });
       items = extractPaymentReceipt(statusResponse);
     }
 
@@ -1709,7 +1715,7 @@ app.post('/api/refund', async (req, res) => {
   };
 
   try {
-    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
+    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload, { timeoutMs: ADYEN_UNATTENDED_TIMEOUT_MS });
     const result = data?.SaleToPOIResponse?.ReversalResponse?.Response?.Result;
     if (result === 'Success') {
       order.refundedAmount = (order.refundedAmount || 0) + (amount || order.amount);
