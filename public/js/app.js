@@ -667,7 +667,8 @@ const $btnOrderDetailClose = document.getElementById('btn-order-detail-close');
 
 function detailRow(label, value, modifier = '') {
   if (value === null || value === undefined || value === '') return '';
-  return `<div class="order-detail-row${modifier}"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`;
+  // A dl per pair, because dt and dd are only valid inside one.
+  return `<dl class="order-detail-row${modifier}"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></dl>`;
 }
 
 function renderOrderDetail(order) {
@@ -679,6 +680,9 @@ function renderOrderDetail(order) {
     // The two fields the card no longer shows.
     detailRow('ServiceID', order.serviceId),
     detailRow('Payment method', order.paymentBrand ? formatBrand(order.paymentBrand) : ''),
+    // Card payments only: the first six and last four digits, as the terminal
+    // returned them. Absent for a wallet, so the row disappears by itself.
+    detailRow('Card', order.maskedPan),
     detailRow('Status', formatStatus(order.status)),
     detailRow('Time', order.createdAt ? new Date(order.createdAt).toLocaleString() : ''),
     detailRow('Entry', order.viaTapToPay ? 'Tap to Pay' : ''),
@@ -689,7 +693,6 @@ function renderOrderDetail(order) {
   const references = [
     detailRow('PSP reference', order.pspReference),
     detailRow('Tender reference', order.tenderReference),
-    detailRow('POI transaction', order.poiTransactionId),
     detailRow('Terminal', order.terminalId)
   ].join('');
 

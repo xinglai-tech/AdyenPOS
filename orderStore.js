@@ -55,7 +55,7 @@ const HEAVY_FIELDS = ['refundResponse', 'cancelResponse', 'response'];
 const CORE_FIELDS = [
   'id', 'serviceId', 'status', 'createdAt', 'amount', 'currency', 'items',
   'terminalId', 'poiTransactionId', 'poiTimestamp', 'pspReference',
-  'tenderReference', 'paymentBrand', 'refundedAmount', 'failureReason',
+  'tenderReference', 'paymentBrand', 'maskedPan', 'refundedAmount', 'failureReason',
   'error', 'viaTapToPay', 'loyalty'
 ];
 

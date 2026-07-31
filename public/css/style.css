@@ -289,31 +289,36 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 .order-detail-section + .order-detail-section { margin-top: 14px; }
+/* This dialog sits on .overlay-content, which is white, so it takes its colours
+   from the light palette. The order card it was built from is white-on-dark, and
+   reusing those values here left most of the text invisible. */
 .order-detail-label {
   font-size: .62rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: .5px;
-  color: rgba(255,255,255,.45);
+  color: var(--muted);
   margin-bottom: 5px;
 }
 .order-detail-row {
   display: flex;
   justify-content: space-between;
   gap: 14px;
-  padding: 4px 0;
-  font-size: .74rem;
-  border-bottom: 1px solid rgba(255,255,255,.06);
+  margin: 0;
+  padding: 5px 0;
+  font-size: .78rem;
+  border-bottom: 1px solid rgba(0,0,0,.06);
 }
 .order-detail-row:last-child { border-bottom: none; }
 .order-detail-row dt {
-  color: rgba(255,255,255,.55);
+  color: var(--text-light);
   flex: none;
 }
 .order-detail-row dd {
   margin: 0;
   text-align: right;
-  color: rgba(255,255,255,.92);
+  color: var(--text);
+  font-weight: 500;
   font-family: 'SF Mono', ui-monospace, monospace;
   /* References have no spaces to break on, so allow them mid-token. */
   word-break: break-all;
@@ -321,15 +326,31 @@ html, body {
 /* Points redeemed and the name they belong to: the one part of an order that is
    about a person rather than a payment, so it is coloured rather than monospaced. */
 .order-detail-row.is-loyalty dd {
-  color: #64d2ff;
+  color: var(--primary);
   font-family: inherit;
 }
-.order-detail-row.is-refund dd { color: var(--warning); }
+/* Not --warning: that orange is legible on the dark order panel but washes out
+   against white. */
+.order-detail-row.is-refund dd { color: #b35c00; }
 .order-detail-reason {
-  font-size: .74rem;
-  color: #ff6b6b;
+  font-size: .78rem;
+  color: var(--danger);
   line-height: 1.45;
 }
+/* The badge is tinted for the dark order panel: a 15% wash plus a bright accent
+   almost vanishes on white, so it is restated here in solid light-theme pairs. */
+.order-detail-head .status {
+  font-size: .66rem;
+  padding: 3px 9px;
+}
+.order-detail-head .status-paid { background: #e6f7ea; color: #1a7f37; }
+.order-detail-head .status-pending,
+.order-detail-head .status-partially_refunded { background: #fff2e0; color: #9a5b00; }
+.order-detail-head .status-failed,
+.order-detail-head .status-error,
+.order-detail-head .status-refund_failed { background: #fdeceb; color: #c9251c; }
+.order-detail-head .status-cancelled { background: #f0f0f2; color: #6e6e73; }
+.order-detail-head .status-refunded { background: #f6ebfd; color: #8b3fbf; }
 
 /* Status badges */
 .status {

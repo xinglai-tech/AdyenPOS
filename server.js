@@ -296,6 +296,31 @@ function extractPaymentBrand(paymentResponse) {
   return null;
 }
 
+// The card number as far as it may be kept: the first six digits and the last four.
+// Only card payments carry one, so a wallet or a cash tender yields null and the UI
+// leaves the row out.
+function extractMaskedPan(paymentResponse) {
+  if (!paymentResponse) return null;
+  // The terminal already formats it as "541333 **** 9999", which is exactly the
+  // first six and last four, so it is preferred over rebuilding one.
+  const masked = paymentResponse.PaymentResult?.PaymentInstrumentData?.CardData?.MaskedPan;
+  if (masked) return String(masked).replace(/\s+/g, ' ').trim();
+
+  const additional = paymentResponse.Response?.AdditionalResponse;
+  if (additional) {
+    try {
+      const params = new URLSearchParams(additional);
+      const bin = params.get('cardBin');
+      const last4 = params.get('cardSummary');
+      if (bin && last4) return `${bin} **** ${last4}`;
+      // A summary on its own is still worth showing: it is what a shopper reads off
+      // their own card to identify the payment.
+      if (last4) return `**** ${last4}`;
+    } catch { /* ignore */ }
+  }
+  return null;
+}
+
 function broadcastSSE(event, data) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   sseClients.forEach(c => c.write(payload));
@@ -597,6 +622,7 @@ app.post('/api/transaction-status', async (req, res) => {
         order.pspReference = extractPspReference(paymentResponse);
         order.tenderReference = extractTenderReference(paymentResponse);
         order.paymentBrand = extractPaymentBrand(paymentResponse);
+        order.maskedPan = extractMaskedPan(paymentResponse);
         orderChanged(order);
       }
     }
@@ -1638,6 +1664,7 @@ app.post('/api/payment', async (req, res) => {
     order.pspReference = extractPspReference(paymentResp);
     order.tenderReference = extractTenderReference(paymentResp);
     order.paymentBrand = extractPaymentBrand(paymentResp);
+    order.maskedPan = extractMaskedPan(paymentResp);
 
     orderChanged(order);
     try { res.json({ order, adyenResponse: data }); } catch (_) { /* client may have disconnected */ }
@@ -2018,6 +2045,7 @@ app.post('/api/taptopay/payment-result', async (req, res) => {
           order.pspReference = extractPspReference(paymentResponse) || pspReference;
           order.tenderReference = extractTenderReference(paymentResponse);
           order.paymentBrand = extractPaymentBrand(paymentResponse);
+          order.maskedPan = extractMaskedPan(paymentResponse);
         }
         orderChanged(order);
       }
@@ -2064,6 +2092,7 @@ app.post('/api/taptopay/payment-result', async (req, res) => {
       order.pspReference = extractPspReference(paymentResponse);
       order.tenderReference = extractTenderReference(paymentResponse);
       order.paymentBrand = extractPaymentBrand(paymentResponse);
+      order.maskedPan = extractMaskedPan(paymentResponse);
       orderChanged(order);
     }
 
@@ -2187,6 +2216,7 @@ app.post('/api/webhook', (req, res) => {
         order.pspReference = extractPspReference(paymentResponse);
         order.tenderReference = extractTenderReference(paymentResponse);
         order.paymentBrand = extractPaymentBrand(paymentResponse);
+        order.maskedPan = extractMaskedPan(paymentResponse);
         orderChanged(order);
       }
     }
@@ -2329,6 +2359,13 @@ const server = tlsOptions
 // it would then have to be corrected out of.
 orderStore.load().then(stored => {
   orders = stored;
+  // Orders stored before the masked card number was recorded still carry the payment
+  // response it comes from, so the field is filled in rather than left blank forever.
+  for (const order of orders) {
+    if (!order.maskedPan && order.response) {
+      order.maskedPan = extractMaskedPan(order.response?.SaleToPOIResponse?.PaymentResponse);
+    }
+  }
   server.listen(PORT, () => {
     console.log(`POS Web App running at ${tlsOptions ? 'https' : 'http'}://localhost:${PORT}`);
   });
