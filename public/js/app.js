@@ -555,6 +555,10 @@ function renderCart() {
 }
 
 // ====================== Orders ======================
+// Every status an order can hold once its payment has succeeded. A refund, whether
+// it went through, was declined or is only partial, does not undo that fact.
+const PAID_STATUSES = new Set(['paid', 'partially_refunded', 'refunded', 'refund_failed']);
+
 function renderOrders() {
   const cur = state.config.currency || 'EUR';
   $orderCount.textContent = state.orders.length;
@@ -583,7 +587,10 @@ function renderOrders() {
     const canRefund = (o.status === 'paid' || o.status === 'partially_refunded' || o.status === 'refund_failed') && o.poiTransactionId && !o.viaTapToPay;
     // Reprinting uses ReceiptReprintFlag, which Adyen does not support for the
     // Android Payments app, and only makes sense on terminals with a printer.
-    const canReprint = o.status === 'paid' && !o.viaTapToPay && terminalHasPrinter(o.terminalId);
+    // Keyed off "the payment succeeded" rather than the current status: a later
+    // refund, or a refund that failed, does not invalidate the original receipt.
+    const paymentSucceeded = PAID_STATUSES.has(o.status);
+    const canReprint = paymentSucceeded && !o.viaTapToPay && terminalHasPrinter(o.terminalId);
 
     return `
       <div class="order-card">
@@ -652,6 +659,7 @@ async function reprintReceipt(serviceId, btn) {
     if (res.ok) {
       showToast('Receipt sent to the terminal', 'success');
     } else {
+      syncTerminalStateFromError(data);
       showToast(data.error || 'Reprint failed', 'error');
     }
   } catch (err) {
@@ -750,6 +758,19 @@ function showTerminalMismatchPopup(orderTerminalId, reason = 'mismatch') {
 
 function closeTerminalMismatchPopup() {
   $terminalMismatchPopup.classList.add('hidden');
+}
+
+// The server refuses terminal-bound requests it knows cannot be delivered, and
+// says so with `terminalOffline`. Its verdict is fresher than ours, so adopt it:
+// the buttons and the terminal card then agree with what just happened.
+function syncTerminalStateFromError(data) {
+  if (!data || !data.terminalOffline) return false;
+  if (Array.isArray(data.connectedTerminals)) {
+    state._terminalOnlineSet = new Set(data.connectedTerminals);
+    state._terminalChecked = true;
+    renderTerminals();
+  }
+  return true;
 }
 
 function ensureTerminalMatch(order) {
@@ -883,7 +904,10 @@ function renderTerminals() {
   bindTerminalPicker();
 
   state.config.poiId = active.poiId;
-  state.terminalOnline = !!active;
+  // Before the first check nothing is known, so stay permissive rather than
+  // greying out the till; afterwards the check is the only source of truth. The
+  // previous `!!active` here silently re-enabled a terminal known to be offline.
+  state.terminalOnline = checked ? online : true;
   renderProducts();
   renderOrders();
 }
@@ -1737,6 +1761,7 @@ async function paySync(body) {
         showOverlayResult(false, reason);
       }
     } else if (data.error) {
+      syncTerminalStateFromError(data);
       showOverlayResult(false, data.error);
     }
   } catch (err) {
@@ -1765,6 +1790,7 @@ async function payAsync(body) {
       showToast('Payment submitted — waiting for terminal response', 'info');
       clearCart();
     } else if (data.error) {
+      syncTerminalStateFromError(data);
       showToast(`Payment error: ${data.error}`, 'error');
     }
   } catch (err) {
@@ -2030,6 +2056,7 @@ async function executeRefund() {
       $refundResult.className = 'refund-result success';
       $refundResult.textContent = msg;
     } else {
+      syncTerminalStateFromError(data);
       $refundResult.className = 'refund-result error';
       $refundResult.textContent = data.order?.status || data.error || 'Refund failed';
     }

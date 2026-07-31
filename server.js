@@ -309,7 +309,14 @@ function makeHeader(category, messageType = 'Request') {
   };
 }
 
-async function adyenRequest(endpoint, body) {
+// A cardholder can hold a terminal for a long time, so the default deadline is
+// deliberately generous — it exists to stop a request hanging forever, not to
+// cut a live transaction short. Calls that never touch the terminal (and so
+// should answer immediately) pass a much shorter `timeoutMs`.
+const ADYEN_TIMEOUT_MS = Number(process.env.ADYEN_REQUEST_TIMEOUT_MS) || 130000;
+const ADYEN_LOOKUP_TIMEOUT_MS = 10000;
+
+async function adyenRequest(endpoint, body, opts = {}) {
   // Mirror the outgoing request to the API log. Done here rather than at each call
   // site because every Terminal API call funnels through this function, so one
   // broadcast covers payments, card acquisition, printing, aborts and the rest.
@@ -319,20 +326,75 @@ async function adyenRequest(endpoint, body) {
     payload: body
   });
 
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-API-key': process.env.ADYEN_API_KEY || ''
-    },
-    body: JSON.stringify(body)
-  });
+  const timeoutMs = opts.timeoutMs || ADYEN_TIMEOUT_MS;
+  let res;
+  try {
+    res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-API-key': process.env.ADYEN_API_KEY || ''
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+  } catch (err) {
+    // A timeout means the outcome is unknown, not that the request failed, so say
+    // so plainly: callers must not record it as a decline.
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      const timeoutError = new Error(`The terminal did not respond within ${Math.round(timeoutMs / 1000)}s, so the outcome is unknown`);
+      timeoutError.code = 'ADYEN_TIMEOUT';
+      throw timeoutError;
+    }
+    throw err;
+  }
   // async endpoint returns 200 with "ok" text, not JSON
   const text = await res.text();
   try {
     return JSON.parse(text);
   } catch {
     return { raw: text, status: res.status };
+  }
+}
+
+// --------------- Terminal reachability preflight ---------------
+// `connectedTerminals` is answered by Adyen from its own records, so it returns in
+// well under a second and never waits on the device. That makes it cheap enough to
+// call before anything that would otherwise sit blocked against a terminal that
+// is not there. Cached briefly so a burst of requests costs one lookup.
+const CONNECTED_CACHE_MS = 5000;
+let _connectedCache = { data: null, at: 0 };
+
+async function fetchConnectedTerminals({ force = false } = {}) {
+  if (!force && _connectedCache.data && Date.now() - _connectedCache.at < CONNECTED_CACHE_MS) {
+    return _connectedCache.data;
+  }
+  const data = await adyenRequest(
+    'https://terminal-api-test.adyen.com/connectedTerminals',
+    { merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT || '' },
+    { timeoutMs: ADYEN_LOOKUP_TIMEOUT_MS }
+  );
+  _connectedCache = { data, at: Date.now() };
+  return data;
+}
+
+// Resolves to null when the terminal can be used, or to a response body describing
+// why it cannot. A lookup that itself fails resolves to null: refusing to act on an
+// inconclusive check would block a working terminal.
+async function terminalUnreachableReason(poiId) {
+  if (!poiId) return { error: 'No terminal is selected' };
+  try {
+    const ids = (await fetchConnectedTerminals())?.uniqueTerminalIds || [];
+    if (ids.includes(poiId)) return null;
+    return {
+      error: `${poiId} is not connected, so the request was not sent to it. Bring the terminal online and try again.`,
+      terminalOffline: true,
+      poiId,
+      connectedTerminals: ids
+    };
+  } catch (err) {
+    console.warn('[Preflight] connectedTerminals lookup failed, continuing:', err.message);
+    return null;
   }
 }
 
@@ -445,11 +507,8 @@ app.post('/api/terminal/select', (req, res) => {
 // --------------- API: Connected Terminals ---------------
 app.post('/api/terminals', async (_req, res) => {
   try {
-    const data = await adyenRequest(
-      'https://terminal-api-test.adyen.com/connectedTerminals',
-      { merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT || '' }
-    );
-    res.json(data);
+    // Forced: an explicit check by the user must never answer from the cache.
+    res.json(await fetchConnectedTerminals({ force: true }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -886,6 +945,9 @@ app.post('/api/reprint-receipt', async (req, res) => {
   }
   const poiId = order.terminalId || getActivePoiId();
   if (!poiId) return res.status(400).json({ error: 'No terminal is selected' });
+
+  const unreachable = await terminalUnreachableReason(poiId);
+  if (unreachable) return res.status(409).json(unreachable);
 
   try {
     // Prefer the receipt data already stored with the order: it survives even
@@ -1448,8 +1510,12 @@ app.post('/api/payment', async (req, res) => {
     };
   }
 
+  // Checked before the order is recorded: a payment that was never sent should not
+  // leave a pending order in the list for the cashier to chase.
+  const unreachable = await terminalUnreachableReason(getActivePoiId());
+  if (unreachable) return res.status(409).json(unreachable);
+
   const header = makeHeader('Payment');
-  // Allow client to provide serviceId so it can issue cancel during sync wait
   if (clientServiceId) header.ServiceID = clientServiceId;
   const transactionId = uuidv4();
   const timestamp = new Date().toISOString();
@@ -1596,11 +1662,16 @@ app.post('/api/cancel', async (req, res) => {
 });
 
 // --------------- API: Referenced Refund ---------------
+// `refund_failed` is included because a failed refund leaves the payment itself
+// untouched, so the attempt must be repeatable — most often the terminal was
+// simply unreachable the first time.
+const REFUNDABLE_STATUSES = new Set(['paid', 'partially_refunded', 'refund_failed']);
+
 app.post('/api/refund', async (req, res) => {
   const { orderId, amount } = req.body;
   const order = orders.find(o => o.id === orderId);
 
-  if (!order || (order.status !== 'paid' && order.status !== 'partially_refunded')) {
+  if (!order || !REFUNDABLE_STATUSES.has(order.status)) {
     return res.status(400).json({ error: 'Order not found or not eligible for refund' });
   }
   if (!order.poiTransactionId) {
@@ -1610,6 +1681,9 @@ app.post('/api/refund', async (req, res) => {
   if (amount > remaining) {
     return res.status(400).json({ error: `Amount exceeds remaining refundable: ${remaining.toFixed(2)}` });
   }
+
+  const unreachable = await terminalUnreachableReason(order.terminalId || getActivePoiId());
+  if (unreachable) return res.status(409).json(unreachable);
 
   const reversalRequest = {
     OriginalPOITransaction: {
@@ -1656,13 +1730,16 @@ app.post('/api/refund/unreferenced', async (req, res) => {
   const { orderId, amount } = req.body;
   const order = orders.find(o => o.id === orderId);
 
-  if (!order || (order.status !== 'paid' && order.status !== 'partially_refunded')) {
+  if (!order || !REFUNDABLE_STATUSES.has(order.status)) {
     return res.status(400).json({ error: 'Order not found or not eligible for refund' });
   }
   const remaining = order.amount - (order.refundedAmount || 0);
   if (amount > remaining) {
     return res.status(400).json({ error: `Amount exceeds remaining refundable: ${remaining.toFixed(2)}` });
   }
+
+  const unreachable = await terminalUnreachableReason(order.terminalId || getActivePoiId());
+  if (unreachable) return res.status(409).json(unreachable);
 
   const unrefHeader = makeHeader('Payment');
 
