@@ -103,13 +103,16 @@ html, body {
   padding: 12px;
 }
 
+/* Deliberately dense: the list is the main way an order is found, so fitting more
+   cards on screen matters more than spelling every field out. The full record is a
+   click away in the detail dialog. */
 .order-card {
   background: rgba(255,255,255,.15);
   border: 1px solid rgba(255,255,255,.18);
   border-radius: var(--radius);
-  padding: 14px;
-  margin-bottom: 10px;
-  cursor: default;
+  padding: 10px 11px;
+  margin-bottom: 7px;
+  cursor: pointer;
   transition: background .2s;
 }
 .order-card:hover { background: rgba(255,255,255,.22); }
@@ -118,44 +121,66 @@ html, body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  gap: 8px;
+  margin-bottom: 5px;
 }
-.order-card-id { font-size: .72rem; color: rgba(255,255,255,.75); font-family: 'SF Mono', ui-monospace, monospace; }
 
+.order-card-reason,
+.order-card-line {
+  /* One line each. Anything longer is read in the detail dialog rather than
+     allowed to reflow and undo the height this layout saves. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .order-card-reason {
-  font-size: .68rem;
+  font-size: .66rem;
   color: #ff6b6b;
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
-.order-card-psp {
-  font-size: .68rem;
-  color: rgba(255,255,255,.75);
+/* One reference per line: a row shared by the PSP reference, the terminal and the
+   time truncated all three at once, which is worse than using the height. */
+.order-card-line {
+  font-size: .64rem;
+  line-height: 1.5;
   font-family: 'SF Mono', ui-monospace, monospace;
-  margin-bottom: 6px;
-  word-break: break-all;
 }
-
-.order-card-items {
-  font-size: .8rem;
-  color: #64d2ff;
-  margin-bottom: 8px;
-  line-height: 1.4;
+/* The reference a payment is reconciled by, so it is the one an eye should land on
+   first: brighter and heavier than the two lines under it. */
+.order-card-psp {
+  font-size: .72rem;
+  font-weight: 700;
+  color: rgba(255,255,255,.9);
 }
-
-.order-card-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+/* Tinted rather than another shade of grey: it names a device, not a payment, and
+   the same card already spends its greys on the amount, the PSP and the time.
+   Dimmed so it stays behind the PSP reference above it. */
+.order-card-terminal { color: rgba(100,210,255,.72); }
+/* Not a reference but a timestamp, so it is set apart from the monospaced IDs
+   above it rather than blending into them. */
+.order-card-time {
+  font-family: inherit;
+  font-size: .62rem;
+  color: rgba(255,255,255,.4);
+  letter-spacing: .2px;
 }
-.order-card-amount { font-weight: 700; font-size: .95rem; font-variant-numeric: tabular-nums; }
-.order-card-time { font-size: .68rem; color: rgba(255,255,255,.6); }
+.order-card-amount {
+  font-weight: 700;
+  font-size: .9rem;
+  font-variant-numeric: tabular-nums;
+  /* Yields to the badge instead of pushing it out of the card. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .btn-refund,
 .btn-reprint {
   flex: 1;
   min-width: 0;
-  padding: 9px 0;
-  font-size: .7rem;
+  padding: 6px 0;
+  font-size: .68rem;
   font-weight: 500;
   text-align: center;
   color: rgba(255,255,255,.82);
@@ -179,7 +204,7 @@ html, body {
 .order-card-actions {
   display: flex;
   gap: 6px;
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 /* Wraps a disabled action so it can still be hovered, and so it keeps the
@@ -200,7 +225,10 @@ html, body {
   transform: translateX(-50%) translateY(3px);
   z-index: 20;
   width: max-content;
-  max-width: 190px;
+  /* Wider than it looks like it needs to be: the card above the actions is only
+     about 50px tall now, so a tip that wrapped to four lines would be clipped by
+     the top of the scrolling list when the card is the first one in it. */
+  max-width: 210px;
   padding: 6px 9px;
   border-radius: 8px;
   background: rgba(20,20,22,.96);
@@ -223,8 +251,8 @@ html, body {
 }
 .btn-check-order, .btn-cancel-order {
   flex: 1;
-  padding: 7px 0;
-  font-size: .75rem;
+  padding: 6px 0;
+  font-size: .68rem;
   font-weight: 500;
   text-align: center;
   border-radius: 8px;
@@ -245,14 +273,75 @@ html, body {
   cursor: not-allowed;
 }
 
+/* ==================== Order detail dialog ==================== */
+/* Holds everything the card leaves out. Rows are label/value pairs so a long
+   reference can wrap under its label instead of stretching the dialog. */
+.order-detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.order-detail-amount {
+  font-size: 1.35rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.order-detail-section + .order-detail-section { margin-top: 14px; }
+.order-detail-label {
+  font-size: .62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: rgba(255,255,255,.45);
+  margin-bottom: 5px;
+}
+.order-detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 4px 0;
+  font-size: .74rem;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+}
+.order-detail-row:last-child { border-bottom: none; }
+.order-detail-row dt {
+  color: rgba(255,255,255,.55);
+  flex: none;
+}
+.order-detail-row dd {
+  margin: 0;
+  text-align: right;
+  color: rgba(255,255,255,.92);
+  font-family: 'SF Mono', ui-monospace, monospace;
+  /* References have no spaces to break on, so allow them mid-token. */
+  word-break: break-all;
+}
+/* Points redeemed and the name they belong to: the one part of an order that is
+   about a person rather than a payment, so it is coloured rather than monospaced. */
+.order-detail-row.is-loyalty dd {
+  color: #64d2ff;
+  font-family: inherit;
+}
+.order-detail-row.is-refund dd { color: var(--warning); }
+.order-detail-reason {
+  font-size: .74rem;
+  color: #ff6b6b;
+  line-height: 1.45;
+}
+
 /* Status badges */
 .status {
-  font-size: .65rem;
+  font-size: .6rem;
   font-weight: 600;
-  padding: 3px 8px;
+  padding: 2px 7px;
   border-radius: 20px;
   text-transform: uppercase;
   letter-spacing: .3px;
+  /* Never shrunk or wrapped by whatever shares its row. */
+  flex: none;
+  white-space: nowrap;
 }
 .status-pending   { background: rgba(255,149,0,.15); color: var(--warning); }
 .status-paid      { background: rgba(52,199,89,.15); color: var(--success); }

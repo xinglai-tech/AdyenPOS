@@ -164,6 +164,19 @@
     </div>
   </div>
 
+  <!-- ==================== Order Detail Modal ==================== -->
+  <!-- Filled by renderOrderDetail: the card in the list is deliberately terse, so
+       every field it omits has to be reachable from here. -->
+  <div id="order-detail-modal" class="overlay hidden">
+    <div class="overlay-content modal-sm">
+      <h3 class="overlay-title">Order</h3>
+      <div id="order-detail-body"></div>
+      <div class="overlay-actions">
+        <button id="btn-order-detail-close" class="btn btn-outline btn-action">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ==================== Tap to Pay Modal ==================== -->
   <div id="ttp-modal" class="overlay hidden">
     <div class="overlay-content modal-sm">

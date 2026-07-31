@@ -575,17 +575,30 @@ function orderActionBlock(order) {
   return null;
 }
 
+// Orders carry text this app did not write: product names, Adyen error conditions,
+// and a member's display name typed into user management. All of it is rendered
+// through innerHTML, so all of it goes through here first.
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 // A disabled button receives no pointer events, so the tip has to live on a wrapper
 // around it rather than on the button itself.
 function withActionTip(buttonHtml, tip) {
   if (!tip) return buttonHtml;
-  const safe = tip.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-  return `<span class="action-tip" data-tip="${safe}">${buttonHtml}</span>`;
+  return `<span class="action-tip" data-tip="${escapeHtml(tip)}">${buttonHtml}</span>`;
 }
 
 function renderOrders() {
   const cur = state.config.currency || 'EUR';
   $orderCount.textContent = state.orders.length;
+  // An order can change while its dialog is open — a pending payment is the whole
+  // reason the dialog has a status in it — so the dialog follows the list.
+  refreshOpenOrderDetail();
 
   const query = ($orderSearch?.value || '').trim().toLowerCase();
   const filtered = query
@@ -604,8 +617,8 @@ function renderOrders() {
   }
 
   $orderList.innerHTML = filtered.map(o => {
-    const itemsSummary = (o.items || []).map(i => `${i.name} x${i.qty}`).join(', ');
-    const time = new Date(o.createdAt).toLocaleTimeString();
+    // Date as well as time: the list keeps up to 200 orders, so it spans days.
+    const time = new Date(o.createdAt).toLocaleString();
     // Cloud Terminal API actions (status/cancel/reversal-refund) do not work for
     // Tap to Pay Payments app orders, which are not connected over the cloud.
     const canRefund = (o.status === 'paid' || o.status === 'partially_refunded' || o.status === 'refund_failed') && o.poiTransactionId && !o.viaTapToPay;
@@ -618,21 +631,19 @@ function renderOrders() {
     const blocked = orderActionBlock(o);
     const off = blocked ? ' disabled' : '';
 
+    // The ServiceID, the payment method and the basket are left to the detail
+    // dialog. What stays is what an order is looked up by, and each reference gets
+    // its own line: sharing one truncated all of them.
     return `
-      <div class="order-card">
+      <div class="order-card" data-order-id="${escapeHtml(o.id)}">
         <div class="order-card-header">
-          <span class="order-card-id">ServiceID: ${o.serviceId || '—'}</span>
+          <span class="order-card-amount">${cur} ${(o.amount || 0).toFixed(2)}</span>
           <span class="status status-${o.status}">${formatStatus(o.status)}</span>
         </div>
-        ${o.failureReason ? `<div class="order-card-reason">${o.failureReason}</div>` : ''}
-        ${o.pspReference ? `<div class="order-card-psp">PSP: ${o.pspReference}</div>` : ''}
-        ${o.terminalId ? `<div class="order-card-psp">Terminal: ${o.terminalId}</div>` : ''}
-        ${o.paymentBrand ? `<div class="order-card-psp">Payment method: ${formatBrand(o.paymentBrand)}</div>` : ''}
-        <div class="order-card-items">${itemsSummary || 'No items'}</div>
-        <div class="order-card-footer">
-          <span class="order-card-amount">${cur} ${(o.amount || 0).toFixed(2)}</span>
-          <span class="order-card-time">${time}</span>
-        </div>
+        ${o.failureReason ? `<div class="order-card-reason">${escapeHtml(o.failureReason)}</div>` : ''}
+        ${o.pspReference ? `<div class="order-card-line order-card-psp">PSP: ${escapeHtml(o.pspReference)}</div>` : ''}
+        <div class="order-card-line order-card-terminal">${escapeHtml(o.terminalId || '—')}</div>
+        <div class="order-card-line order-card-time">${escapeHtml(time)}</div>
         ${o.status === 'pending' && !o.viaTapToPay ? `
           <div class="order-card-actions">
             ${withActionTip(`<button class="btn-check-order" onclick="queryOrderStatus('${o.serviceId}', this)"${off}><i data-lucide="search"></i>Check Status</button>`, blocked)}
@@ -647,6 +658,109 @@ function renderOrders() {
     `;
   }).join('');
   refreshIcons();
+}
+
+// ====================== Order detail ======================
+const $orderDetailModal = document.getElementById('order-detail-modal');
+const $orderDetailBody  = document.getElementById('order-detail-body');
+const $btnOrderDetailClose = document.getElementById('btn-order-detail-close');
+
+function detailRow(label, value, modifier = '') {
+  if (value === null || value === undefined || value === '') return '';
+  return `<div class="order-detail-row${modifier}"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`;
+}
+
+function renderOrderDetail(order) {
+  const cur = state.config.currency || 'EUR';
+  const money = n => `${cur} ${(Number(n) || 0).toFixed(2)}`;
+  const loyalty = order.loyalty;
+
+  const payment = [
+    // The two fields the card no longer shows.
+    detailRow('ServiceID', order.serviceId),
+    detailRow('Payment method', order.paymentBrand ? formatBrand(order.paymentBrand) : ''),
+    detailRow('Status', formatStatus(order.status)),
+    detailRow('Time', order.createdAt ? new Date(order.createdAt).toLocaleString() : ''),
+    detailRow('Entry', order.viaTapToPay ? 'Tap to Pay' : ''),
+    // Only worth a row once something has actually been refunded.
+    order.refundedAmount > 0 ? detailRow('Refunded', money(order.refundedAmount), ' is-refund') : ''
+  ].join('');
+
+  const references = [
+    detailRow('PSP reference', order.pspReference),
+    detailRow('Tender reference', order.tenderReference),
+    detailRow('POI transaction', order.poiTransactionId),
+    detailRow('Terminal', order.terminalId)
+  ].join('');
+
+  // A redemption is the only part of an order that names a person, so it gets its
+  // own section rather than being buried among the references.
+  const member = loyalty ? [
+    detailRow('Customer', loyalty.displayName, ' is-loyalty'),
+    detailRow('Points redeemed', `${loyalty.pointsUsed} pts`, ' is-loyalty'),
+    detailRow('Basket before discount', money(loyalty.originalAmount), ' is-loyalty'),
+    detailRow('Paid by card', money(order.amount), ' is-loyalty')
+  ].join('') : '';
+
+  const items = (order.items || []).map(i =>
+    detailRow(`${i.name || 'Item'} x${i.qty || 1}`, money((i.price || 0) * (i.qty || 1)))
+  ).join('');
+
+  $orderDetailBody.innerHTML = `
+    <div class="order-detail-head">
+      <span class="order-detail-amount">${money(order.amount)}</span>
+      <span class="status status-${order.status}">${formatStatus(order.status)}</span>
+    </div>
+    ${order.failureReason || order.error ? `
+      <div class="order-detail-section">
+        <div class="order-detail-label">Failure</div>
+        <div class="order-detail-reason">${escapeHtml(order.failureReason || order.error)}</div>
+      </div>` : ''}
+    <div class="order-detail-section">
+      <div class="order-detail-label">Payment</div>
+      ${payment}
+    </div>
+    ${member ? `
+      <div class="order-detail-section">
+        <div class="order-detail-label">Member</div>
+        ${member}
+      </div>` : ''}
+    ${items ? `
+      <div class="order-detail-section">
+        <div class="order-detail-label">Items</div>
+        ${items}
+      </div>` : ''}
+    ${references ? `
+      <div class="order-detail-section">
+        <div class="order-detail-label">References</div>
+        ${references}
+      </div>` : ''}
+  `;
+}
+
+// Which order the dialog is showing, so an update to that order can be reflected
+// while it is still on screen.
+let _openOrderId = null;
+
+function openOrderDetail(orderId) {
+  const order = state.orders.find(o => o.id === orderId);
+  if (!order) return;
+  _openOrderId = orderId;
+  renderOrderDetail(order);
+  $orderDetailModal.classList.remove('hidden');
+}
+
+function refreshOpenOrderDetail() {
+  if (!_openOrderId || $orderDetailModal.classList.contains('hidden')) return;
+  const order = state.orders.find(o => o.id === _openOrderId);
+  // Cleared orders take their dialog with them, rather than leaving a stale one up.
+  if (order) renderOrderDetail(order);
+  else closeOrderDetail();
+}
+
+function closeOrderDetail() {
+  $orderDetailModal.classList.add('hidden');
+  _openOrderId = null;
 }
 
 // Lucide replaces every `data-lucide` placeholder with an inline SVG, so it has to
@@ -2363,6 +2477,22 @@ function bindEvents() {
   $btnUserdataSave.addEventListener('click', saveMembers);
   $btnClearOrders.addEventListener('click', clearOrders);
   $orderSearch.addEventListener('input', () => renderOrders());
+
+  // Delegated, because the list is rebuilt from scratch on every order update: a
+  // listener bound to each card would be thrown away seconds later. The actions row
+  // is excluded as a whole rather than just its buttons, because a disabled button
+  // passes its click to the wrapper that carries the tooltip.
+  $orderList.addEventListener('click', (e) => {
+    if (e.target.closest('.order-card-actions')) return;
+    const card = e.target.closest('.order-card');
+    if (card) openOrderDetail(card.dataset.orderId);
+  });
+  $btnOrderDetailClose.addEventListener('click', closeOrderDetail);
+  // The backdrop is part of the overlay element, so a click that lands on it and
+  // not on the dialog inside means "dismiss".
+  $orderDetailModal.addEventListener('click', (e) => {
+    if (e.target === $orderDetailModal) closeOrderDetail();
+  });
   $btnClearResp.addEventListener('click', () => { $apiResponse.innerHTML = '<span class="log-empty">No response yet</span>'; });
   $btnToggleLog.addEventListener('click', () => {
     $rightCol.classList.toggle('hidden');
