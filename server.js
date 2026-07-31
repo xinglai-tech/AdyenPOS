@@ -390,7 +390,19 @@ async function terminalUnreachableReason(poiId) {
   if (!poiId) return { error: 'No terminal is selected' };
   try {
     const ids = (await fetchConnectedTerminals())?.uniqueTerminalIds || [];
-    if (ids.includes(poiId)) return null;
+    const online = ids.includes(poiId);
+    // Mirrored to the API log because this call is made by the server on its own
+    // initiative: without it the log shows the request with no answer, and there
+    // is no way to tell "Adyen says it is online" from "the lookup itself failed".
+    broadcastSSE('apiResponse', {
+      label: 'Preflight · connectedTerminals',
+      payload: {
+        poiId,
+        verdict: online ? 'online — request will be sent' : 'offline — request refused',
+        uniqueTerminalIds: ids
+      }
+    });
+    if (online) return null;
     console.log(`[Preflight] ${poiId} is not in connectedTerminals (${ids.length} online), refusing the request`);
     return {
       error: `${poiId} is not connected, so the request was not sent to it. Bring the terminal online and try again.`,
@@ -400,6 +412,10 @@ async function terminalUnreachableReason(poiId) {
     };
   } catch (err) {
     console.warn('[Preflight] connectedTerminals lookup failed, continuing:', err.message);
+    broadcastSSE('apiResponse', {
+      label: 'Preflight · connectedTerminals',
+      payload: { poiId, verdict: 'lookup failed — request sent anyway', error: err.message }
+    });
     return null;
   }
 }

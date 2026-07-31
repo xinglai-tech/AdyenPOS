@@ -276,6 +276,13 @@ function setupSSE() {
     showApiResponse(route ? `${category} · ${route}` : category, payload, 'request');
   });
 
+  // For calls the server makes on its own initiative, where no fetch on this page
+  // returns the answer that could otherwise be logged at the call site.
+  es.addEventListener('apiResponse', (e) => {
+    const { label, payload } = JSON.parse(e.data);
+    showApiResponse(label || 'Response', payload);
+  });
+
   es.addEventListener('ordersCleared', () => {
     state.orders = [];
     renderOrders();
