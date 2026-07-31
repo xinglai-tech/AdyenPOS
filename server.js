@@ -349,7 +349,8 @@ async function adyenRequest(endpoint, body, opts = {}) {
     });
   } catch (err) {
     // A timeout means the outcome is unknown, not that the request failed, so say
-    // so plainly: callers must not record it as a decline.
+    // so plainly: callers must not record it as a decline. `code` travels out to the
+    // client, which holds this message on screen longer than an ordinary error.
     if (err.name === 'TimeoutError' || err.name === 'AbortError') {
       const timeoutError = new Error(`The terminal did not respond within ${Math.round(timeoutMs / 1000)}s, please retry when the terminal is online.`);
       timeoutError.code = 'ADYEN_TIMEOUT';
@@ -589,7 +590,7 @@ app.post('/api/transaction-status', async (req, res) => {
 
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message, code: err.code });
   }
 });
 
@@ -1040,7 +1041,7 @@ app.post('/api/reprint-receipt', async (req, res) => {
       steps
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message, code: err.code });
   }
 });
 
@@ -1669,7 +1670,7 @@ app.post('/api/cancel', async (req, res) => {
     }
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message, code: err.code });
   }
 });
 

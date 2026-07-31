@@ -302,14 +302,12 @@ function setupSSE() {
     }
   });
 
-  let _lastTerminalEvent = '';
+  // Protocol chatter the terminal sends unprompted: Initialised, CardInserted,
+  // PrintFinished and so on. It belongs in the log, not in the banner, which is for
+  // the few things the cashier has to act on.
   es.addEventListener('eventNotification', (e) => {
     const data = JSON.parse(e.data);
-    const evt = data.EventToNotify || 'notification';
-    if (evt === _lastTerminalEvent) return;
-    _lastTerminalEvent = evt;
-    showToast(`Terminal event: ${evt}`, 'info');
-    setTimeout(() => { _lastTerminalEvent = ''; }, 10000);
+    showApiResponse(`EventNotification · ${data.EventToNotify || 'notification'}`, data);
   });
 
   es.addEventListener('displayNotification', (e) => {
@@ -688,7 +686,7 @@ async function reprintReceipt(serviceId, btn) {
       showToast('Receipt sent to the terminal', 'success');
     } else {
       syncTerminalStateFromError(data);
-      showToast(data.error || 'Reprint failed', 'error');
+      showRequestError(data, 'Reprint failed');
     }
   } catch (err) {
     showToast(`Reprint failed: ${err.message}`, 'error');
@@ -1840,6 +1838,14 @@ async function queryOrderStatus(serviceId, btnEl) {
     const data = await res.json();
     showApiResponse(`TransactionStatus [${serviceId}]`, data);
 
+    // A refused or timed-out call carries no TransactionStatusResponse at all, so
+    // without this the failure passed silently and the button just re-enabled.
+    if (!res.ok) {
+      syncTerminalStateFromError(data);
+      showRequestError(data, 'Status check failed');
+      return;
+    }
+
     const statusResp = data?.SaleToPOIResponse?.TransactionStatusResponse;
     const result = statusResp?.Response?.Result;
 
@@ -1884,6 +1890,11 @@ async function cancelOrder(serviceId, btnEl) {
     });
     const data = await res.json();
     showApiResponse(`Cancel [${serviceId}]`, data);
+    if (!res.ok) {
+      syncTerminalStateFromError(data);
+      showRequestError(data, 'Cancel failed');
+      return;
+    }
     showToast('Cancel request sent', 'info');
   } catch (err) {
     showToast(`Cancel failed: ${err.message}`, 'error');
@@ -2290,6 +2301,13 @@ function showBanner(content, type = 'info', duration = 5000) {
 
 function showToast(msg, type = 'info', duration = 5000) {
   showBanner(msg, type, duration);
+}
+
+// A timeout names a wait the reader has just sat through and asks them to retry, so
+// it is held a second longer than an error that is over and done with.
+function showRequestError(data, fallback) {
+  const timedOut = data && data.code === 'ADYEN_TIMEOUT';
+  showToast((data && data.error) || fallback, 'error', timedOut ? 6000 : 5000);
 }
 
 // ====================== Event Binding ======================
