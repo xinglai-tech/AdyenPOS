@@ -323,10 +323,9 @@ html, body {
   /* References have no spaces to break on, so allow them mid-token. */
   word-break: break-all;
 }
-/* Points redeemed and the name they belong to: the one part of an order that is
-   about a person rather than a payment, so it is coloured rather than monospaced. */
+/* A name and a points total are not identifiers, so they drop the monospace the
+   references use. The colour stays the same as every other value on purpose. */
 .order-detail-row.is-loyalty dd {
-  color: var(--primary);
   font-family: inherit;
 }
 /* Not --warning: that orange is legible on the dark order panel but washes out
@@ -741,6 +740,13 @@ html, body {
   object-fit: contain;
 }
 .logo-preview img:not([src]) { display: none; }
+/* The basket line is a sentence when empty and a count when not, so it belongs in
+   the body font. It used to borrow .logo-meta, which is monospaced for filenames. */
+.basket-summary {
+  font-size: .74rem;
+  color: var(--text-light);
+  font-variant-numeric: tabular-nums;
+}
 .logo-meta {
   font-size: .66rem;
   color: var(--muted);
@@ -937,10 +943,19 @@ html, body {
   max-height: 40vh;
   overflow-y: auto;
   text-align: left;
-  font-family: 'SF Mono', ui-monospace, monospace;
+  /* Almost every message here is a sentence, so it reads in the body font like the
+     rest of the app. Only the raw payload below opts back into monospace. */
+  line-height: 1.5;
 }
 .ttp-message-info { background: rgba(0,122,255,.08); color: var(--primary); }
 .ttp-message-error { background: rgba(255,59,48,.08); color: var(--danger); }
+/* The one case that is not prose: the parameters the Payments app returned, printed
+   as indented JSON, which needs the alignment monospace gives it. */
+.ttp-message-mono {
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: .72rem;
+  line-height: 1.45;
+}
 .ttp-buttons {
   display: flex;
   flex-direction: column;
@@ -1459,7 +1474,10 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  /* Above the mobile order panel (1200), which is fixed and full-screen: a modal
+     opened from an order card was painted behind it and only appeared once the
+     panel was closed. Still below the toasts (1500) and the offline bar (9999). */
+  z-index: 1300;
   transition: opacity .25s ease;
 }
 .hidden { display: none !important; }

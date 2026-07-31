@@ -2623,11 +2623,13 @@ function closeTtpModal() {
   TTP.modal.classList.add('hidden');
 }
 
-function ttpMessage(msg, type = 'info') {
+// `mono` is for raw payloads rather than sentences: the class list is rebuilt from
+// scratch here, so the modifier has to be applied in the same place.
+function ttpMessage(msg, type = 'info', mono = false) {
   if (!TTP.message) return;
   if (!msg) { TTP.message.classList.add('hidden'); TTP.message.textContent = ''; return; }
   TTP.message.textContent = msg;
-  TTP.message.className = `ttp-message ttp-message-${type}`;
+  TTP.message.className = `ttp-message ttp-message-${type}${mono ? ' ttp-message-mono' : ''}`;
 }
 
 function renderTtpStatus() {
@@ -2909,7 +2911,7 @@ async function handleTtpReturn() {
     // No encrypted payload — show whatever came back
     showApiResponse('Tap to Pay result', all);
     const detail = Object.keys(all).length ? JSON.stringify(all, null, 2) : '(no parameters returned)';
-    ttpMessage(`Returned from Payments app:\n\n${detail}`, 'info');
+    ttpMessage(`Returned from Payments app:\n\n${detail}`, 'info', true);
     showToast('Tap to Pay returned — see the dialog', 'info');
     return true;
   }
