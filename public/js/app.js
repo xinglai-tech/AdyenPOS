@@ -200,6 +200,11 @@ const $refundModal     = document.getElementById('refund-modal');
 const $btnRefundOk     = document.getElementById('btn-refund-confirm');
 const $btnRefundCancel = document.getElementById('btn-refund-cancel');
 
+// Terminal mismatch popup
+const $terminalMismatchPopup = document.getElementById('terminal-mismatch-popup');
+const $terminalMismatchMessage = document.getElementById('terminal-mismatch-message');
+const $btnMismatchClose = document.getElementById('btn-mismatch-close');
+
 // ====================== Init ======================
 let _sseReady = false;
 let _terminalReady = false;
@@ -628,6 +633,12 @@ function terminalHasPrinter(poiId) {
 }
 
 async function reprintReceipt(serviceId, btn) {
+  const order = state.orders.find(o => o.serviceId === serviceId);
+  if (!order) {
+    showToast('Order not found', 'error');
+    return;
+  }
+  if (!ensureTerminalMatch(order)) return;
   const original = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = 'Printing...'; }
   try {
@@ -711,6 +722,34 @@ const TERMINAL_ART = {
 // Splits "V400m-346536527" into the model it describes and the serial that follows.
 // Unknown models still render: the label falls back to whatever the POI ID carries,
 // so a terminal added before this list was updated is not left blank.
+function terminalDisplayName(poiId) {
+  return terminalModelInfo(poiId).title || poiId || 'Unknown terminal';
+}
+
+function showTerminalMismatchPopup(orderTerminalId) {
+  const activePoiId = state.config.poiId || '';
+  const orderName = terminalDisplayName(orderTerminalId);
+  const activeName = activePoiId ? terminalDisplayName(activePoiId) : 'No terminal selected';
+  $terminalMismatchMessage.textContent =
+    `This order was processed on ${orderName}. Please switch the Current terminal to that device. Current terminal: ${activeName}.`;
+  $terminalMismatchPopup.classList.remove('hidden');
+}
+
+function closeTerminalMismatchPopup() {
+  $terminalMismatchPopup.classList.add('hidden');
+}
+
+function ensureTerminalMatch(order) {
+  // Old orders may not record a terminalId; allow those through rather than
+  // blocking otherwise-valid refund/reprint actions.
+  if (!order || !order.terminalId) return true;
+  if (order.terminalId !== state.config.poiId) {
+    showTerminalMismatchPopup(order.terminalId);
+    return false;
+  }
+  return true;
+}
+
 function terminalModelInfo(poiId) {
   const text = String(poiId || '');
   const dash = text.indexOf('-');
@@ -1886,6 +1925,7 @@ const $refundTypeUnref = document.getElementById('refund-type-unreferenced');
 function promptRefund(orderId) {
   const order = state.orders.find(o => o.id === orderId);
   if (!order) return;
+  if (!ensureTerminalMatch(order)) return;
   _refundOrderId = orderId;
   const cur = state.config.currency || 'EUR';
   const refunded = order.refundedAmount || 0;
@@ -2258,6 +2298,7 @@ function bindEvents() {
 
   // Refund modal
   $btnRefundOk.addEventListener('click', executeRefund);
+  $btnMismatchClose.addEventListener('click', closeTerminalMismatchPopup);
   $btnRefundCancel.addEventListener('click', () => {
     setRefundModalState('input');
     $refundModal.classList.add('hidden');

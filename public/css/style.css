@@ -1345,6 +1345,37 @@ html, body {
 
 .overlay-actions { display: flex; gap: 12px; justify-content: center; margin-top: 20px; }
 
+/* ============ Terminal mismatch popup ============ */
+/* A small, fixed popup rather than a full-screen overlay, so it never covers the
+   bottom action bar. It sits above overlays and toast just in case. */
+#terminal-mismatch-popup {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1600;
+  width: min(90vw, 360px);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px 22px;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0,0,0,.2);
+}
+#terminal-mismatch-popup .mismatch-title {
+  font-size: .92rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: var(--danger);
+}
+#terminal-mismatch-popup .mismatch-message {
+  font-size: .8rem;
+  color: var(--text);
+  line-height: 1.5;
+  margin: 0 0 14px;
+}
+#terminal-mismatch-popup .btn { padding: 8px 20px; font-size: .8rem; }
+
 /* Spinner */
 .spinner {
   width: 44px; height: 44px;
