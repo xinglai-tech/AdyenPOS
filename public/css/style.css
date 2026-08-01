@@ -1401,63 +1401,6 @@ html, body {
   overflow: hidden;
 }
 
-/* Switch terminal modal */
-.switch-modal-content {
-  max-width: 400px;
-  text-align: center;
-}
-.switch-modal-notice {
-  font-size: var(--fs-caption);
-  line-height: 1.5;
-  color: var(--warning-ink);
-  background: rgba(255,149,0,.1);
-  border: 1px solid rgba(255,149,0,.28);
-  border-radius: var(--radius-sm);
-  padding: 10px 14px;
-  margin: 8px 0 12px;
-  text-align: left;
-}
-.switch-modal-notice strong { color: #7a4700; }
-.switch-modal-desc {
-  font-size: var(--fs-body);
-  color: var(--text-light);
-  margin: 4px 0 14px;
-}
-.switch-modal-current {
-  font-size: var(--fs-caption);
-  color: var(--muted);
-  margin-bottom: 16px;
-}
-.switch-modal-current span {
-  font-family: 'SF Mono', ui-monospace, monospace;
-  color: var(--text);
-  font-weight: 600;
-}
-.input-poi {
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  font-size: var(--fs-body);
-  font-family: 'SF Mono', ui-monospace, monospace;
-  padding: 10px 14px;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-md);
-  background: #fff;
-  color: var(--text);
-  outline: none;
-  transition: border-color .2s var(--ease), box-shadow .2s var(--ease);
-  margin-bottom: 8px;
-}
-.input-poi:hover { border-color: var(--muted); }
-.input-poi:focus { border-color: var(--primary); outline: 2px solid var(--primary-focus); outline-offset: 2px; }
-.input-poi::placeholder { color: var(--muted); }
-.switch-modal-error {
-  font-size: var(--fs-caption);
-  color: var(--danger-ink);
-  margin: 0 0 8px;
-}
-.switch-modal-error.hidden { display: none; }
-
 /* ============ Product Section ============ */
 #product-section {
   padding: 0;

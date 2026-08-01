@@ -505,35 +505,38 @@ app.get('/api/events', (req, res) => {
   });
 });
 
-// --------------- API: Add Terminal ---------------
-app.post('/api/terminal/add', async (req, res) => {
-  const { poiId } = req.body;
-  if (!poiId || !poiId.trim()) {
-    return res.status(400).json({ error: 'Terminal ID is required' });
-  }
-  const id = poiId.trim();
-  if (terminals.find(t => t.poiId === id)) {
-    return res.status(400).json({ error: 'Terminal already added' });
-  }
-  if (terminals.length >= MAX_TERMINALS) {
-    return res.status(400).json({ error: `Maximum ${MAX_TERMINALS} terminals. Please remove one first.` });
-  }
-
+// --------------- API: Add Terminals ---------------
+// Adds every terminal that is online for this merchant account and not already in
+// the list.
+//
+// This used to take one typed POI ID and check it against the same online list. The
+// typing was busywork with a wrong answer available: the merchant account already
+// determines which terminals exist, so the only thing a person could contribute was
+// a typo, answered by a "not online" error they could do nothing about.
+app.post('/api/terminal/discover', async (_req, res) => {
   try {
-    const data = await adyenRequest(
-      'https://terminal-api-test.adyen.com/connectedTerminals',
-      { merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT || '' },
-      { label: 'Connected terminals' }
-    );
-    const onlineList = data.uniqueTerminalIds || [];
-    if (!onlineList.includes(id)) {
-      return res.status(404).json({ error: `Terminal ${id} is not online`, terminals: onlineList });
-    }
+    const data = await fetchConnectedTerminals({ force: true });
+    const online = data.uniqueTerminalIds || [];
+    const known = new Set(terminals.map(t => t.poiId));
+    const missing = online.filter(id => !known.has(id));
 
-    const isFirst = terminals.length === 0;
-    terminals.push({ poiId: id, active: isFirst });
-    broadcastSSE('terminalUpdate', terminals);
-    res.json({ success: true, terminals });
+    const room = Math.max(0, MAX_TERMINALS - terminals.length);
+    const added = missing.slice(0, room);
+    for (const poiId of added) {
+      terminals.push({ poiId, active: terminals.length === 0 });
+    }
+    if (added.length) broadcastSSE('terminalUpdate', terminals);
+
+    res.json({
+      added,
+      // Counted separately so the client can say the list is full rather than that
+      // there was nothing to add. Those are different things to someone looking at a
+      // terminal that is plainly online and wondering why it did not appear.
+      notAddedForSpace: missing.length - added.length,
+      onlineCount: online.length,
+      maxTerminals: MAX_TERMINALS,
+      terminals
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -567,10 +570,19 @@ app.post('/api/terminal/select', (req, res) => {
 });
 
 // --------------- API: Connected Terminals ---------------
-app.post('/api/terminals', async (_req, res) => {
+app.post('/api/terminals', async (req, res) => {
+  // The client re-checks the terminal after every EventSource reconnect, which is
+  // not the user asking for anything. It used to be indistinguishable from a real
+  // check here, with two consequences: it called Adyen every time, bypassing the
+  // cache, and adyenRequest broadcast its request mirror to every connected client
+  // -- so an unpaired 'Connected terminals' REQ appeared in everyone's log, with no
+  // response beside it, triggered by nobody.
+  //
+  // An explicit check must still never answer from the cache: showing a terminal as
+  // online because it was five seconds ago is the one thing this button is for.
+  const background = req.body?.silent === true;
   try {
-    // Forced: an explicit check by the user must never answer from the cache.
-    res.json(await fetchConnectedTerminals({ force: true }));
+    res.json(await fetchConnectedTerminals({ force: !background, silent: background }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

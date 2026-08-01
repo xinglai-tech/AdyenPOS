@@ -132,12 +132,6 @@ const $btnClearCart     = document.getElementById('btn-clear-cart');
 const $btnCheckTerm    = document.getElementById('btn-check-terminal');
 const $terminalList    = document.getElementById('terminal-list');
 const $btnAddTerm      = document.getElementById('btn-add-terminal');
-const $addTermModal    = document.getElementById('add-terminal-modal');
-const $inputPoiId      = document.getElementById('input-poi-id');
-const $addTermCount    = document.getElementById('add-terminal-count');
-const $addTermError    = document.getElementById('add-terminal-error');
-const $btnAddOk        = document.getElementById('btn-add-confirm');
-const $btnAddCancel    = document.getElementById('btn-add-cancel');
 const $toggleAsync     = document.getElementById('toggle-async');
 const $orderList       = document.getElementById('order-list');
 const $orderCount      = document.getElementById('order-count');
@@ -1740,7 +1734,13 @@ async function checkTerminal(opts) {
   }
 
   try {
-    const res = await fetch('/api/terminals', { method: 'POST' });
+    // Sent on: `silent` only ever suppressed this client's own response entry, so a
+    // background re-check still had its request broadcast to every open log.
+    const res = await fetch('/api/terminals', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ silent })
+    });
     const data = await res.json();
     if (!silent) showApiResponse('Connected terminals', data);
     const onlineList = data.uniqueTerminalIds || [];
@@ -1765,58 +1765,49 @@ async function checkTerminal(opts) {
   renderTerminals();
 }
 
-// ====================== Add Terminal ======================
-function openAddTerminalModal() {
-  const list = state.config.terminals || [];
-  const max = state.config.maxTerminals || 5;
-  $addTermCount.textContent = `${list.length} / ${max} terminals`;
-  $inputPoiId.value = '';
-  $addTermError.classList.add('hidden');
-  $addTermModal.classList.remove('hidden');
-  setTimeout(() => $inputPoiId.focus(), 100);
-}
-
-function closeAddTerminalModal() {
-  $addTermModal.classList.add('hidden');
-}
-
-async function confirmAddTerminal() {
-  const newPoiId = $inputPoiId.value.trim();
-  if (!newPoiId) {
-    $addTermError.textContent = 'Please enter a Terminal ID';
-    $addTermError.classList.remove('hidden');
-    return;
-  }
-
-  $addTermError.classList.add('hidden');
-  $btnAddOk.disabled = true;
-  $btnAddOk.textContent = 'Adding...';
+// ====================== Add Terminals ======================
+// No dialog and nothing to type: the merchant account decides which terminals
+// exist, so the button asks Adyen which of them are online and takes the ones the
+// list does not have yet.
+async function addTerminals() {
+  const original = $btnAddTerm.innerHTML;
+  $btnAddTerm.disabled = true;
+  $btnAddTerm.textContent = 'Checking...';
 
   try {
-    const res = await fetch('/api/terminal/add', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ poiId: newPoiId })
-    });
+    const res = await fetch('/api/terminal/discover', { method: 'POST' });
     const data = await res.json();
-    showApiResponse('Add terminal', data);
+    showApiResponse('Add terminals', data);
 
     if (!res.ok) {
-      $addTermError.textContent = data.error || 'Add failed';
-      $addTermError.classList.remove('hidden');
+      showToast(data.error || 'Could not add terminals', 'error');
       return;
     }
 
     state.config.terminals = data.terminals;
     renderTerminals();
-    closeAddTerminalModal();
-    showToast(`Added ${newPoiId}`, 'success');
+
+    const count = data.added.length;
+    if (count > 0) {
+      showToast(
+        `Another ${count === 1 ? 'terminal was' : `${count} terminals were`} added into the available list`,
+        'success'
+      );
+    } else if (data.notAddedForSpace > 0) {
+      // Online, missing from the list, and still not added: saying "no more
+      // available" here would be untrue and would hide the one thing that fixes it.
+      showToast(
+        `The list is full at ${data.maxTerminals}. Remove one to add another.`,
+        'warning'
+      );
+    } else {
+      showToast('No more terminal is available', 'info');
+    }
   } catch (err) {
-    $addTermError.textContent = `Error: ${err.message}`;
-    $addTermError.classList.remove('hidden');
+    showToast(`Could not add terminals: ${err.message}`, 'error');
   } finally {
-    $btnAddOk.disabled = false;
-    $btnAddOk.textContent = 'Add';
+    $btnAddTerm.disabled = false;
+    $btnAddTerm.innerHTML = original;
   }
 }
 
@@ -2553,10 +2544,7 @@ function bindEvents() {
   $btnClearCart.addEventListener('click', clearCart);
   $btnPay.addEventListener('click', initiatePayment);
   $btnCheckTerm.addEventListener('click', checkTerminal);
-  $btnAddTerm.addEventListener('click', openAddTerminalModal);
-  $btnAddOk.addEventListener('click', confirmAddTerminal);
-  $btnAddCancel.addEventListener('click', closeAddTerminalModal);
-  $inputPoiId.addEventListener('keydown', (e) => { if (e.key === 'Enter') confirmAddTerminal(); });
+  $btnAddTerm.addEventListener('click', addTerminals);
   $btnPaymethodCancel.addEventListener('click', closePaymethodModal);
   $paymethodModal.querySelectorAll('.paymethod-btn').forEach(btn => {
     btn.addEventListener('click', () => processPayment(btn.dataset.brand || '', btn.dataset.entryMode || ''));
