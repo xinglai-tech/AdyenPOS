@@ -9,6 +9,12 @@ const { v4: uuidv4 } = require('uuid');
 const nexoCrypto = require('./nexoCrypto');
 const { readInputResult, readEnableServiceResult } = require('./nexoParse');
 const orderStore = require('./orderStore');
+const {
+  planCancel, shouldRetryAbort,
+  DEFAULT_ABORT_RETRY_MS, DEFAULT_ABORT_ATTEMPTS, DEFAULT_DISPATCH_WAIT_MS
+} = require('./cancelPolicy');
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -367,7 +373,11 @@ async function adyenRequest(endpoint, body, opts = {}) {
   // otherwise bury the request they did ask for.
   if (!opts.silent) {
     broadcastSSE('apiRequest', {
-      category: body?.SaleToPOIRequest?.MessageHeader?.MessageCategory || 'Request',
+      // Declared by the caller rather than read off the MessageCategory. The category
+      // cannot name these on its own: a refund and a sale are both 'Payment', and
+      // cancelling a sale and cancelling a card read are both 'Abort'. The client
+      // logs the matching response under the same string, so the two halves pair up.
+      label: opts.label || body?.SaleToPOIRequest?.MessageHeader?.MessageCategory || '',
       endpoint,
       payload: body
     });
@@ -420,7 +430,7 @@ async function fetchConnectedTerminals({ force = false, silent = false } = {}) {
   const data = await adyenRequest(
     'https://terminal-api-test.adyen.com/connectedTerminals',
     { merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT || '' },
-    { timeoutMs: ADYEN_LOOKUP_TIMEOUT_MS, silent }
+    { timeoutMs: ADYEN_LOOKUP_TIMEOUT_MS, silent, label: 'Connected terminals' }
   );
   _connectedCache = { data, at: Date.now() };
   return data;
@@ -512,7 +522,8 @@ app.post('/api/terminal/add', async (req, res) => {
   try {
     const data = await adyenRequest(
       'https://terminal-api-test.adyen.com/connectedTerminals',
-      { merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT || '' }
+      { merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT || '' },
+      { label: 'Connected terminals' }
     );
     const onlineList = data.uniqueTerminalIds || [];
     if (!onlineList.includes(id)) {
@@ -594,7 +605,7 @@ app.post('/api/transaction-status', async (req, res) => {
   };
 
   try {
-    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload, { timeoutMs: ADYEN_UNATTENDED_TIMEOUT_MS });
+    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload, { timeoutMs: ADYEN_UNATTENDED_TIMEOUT_MS, label: 'Transaction status' });
 
     // If Adyen returns a completed payment result, update the order
     const statusResponse = data?.SaleToPOIResponse?.TransactionStatusResponse;
@@ -612,6 +623,7 @@ app.post('/api/transaction-status', async (req, res) => {
           const errorCondition = paymentResponse.Response?.ErrorCondition;
           order.status = (errorCondition === 'Aborted' || errorCondition === 'Cancel') ? 'cancelled' : 'failed';
         }
+        order.failureReason = describeFailure(paymentResponse);
         order.response = data;
         settleLoyalty(order);
         const poiData = paymentResponse.POIData;
@@ -877,7 +889,7 @@ async function sendPrintContent(poiId, outputContent, documentQualifier = 'Docum
         }
       }
     }
-  }, { timeoutMs: ADYEN_UNATTENDED_TIMEOUT_MS });
+  }, { timeoutMs: ADYEN_UNATTENDED_TIMEOUT_MS, label: 'Print receipt' });
 }
 
 // --------------- API: Receipt Settings ---------------
@@ -1024,7 +1036,7 @@ app.post('/api/reprint-receipt', async (req, res) => {
             }
           }
         }
-      }, { timeoutMs: ADYEN_UNATTENDED_TIMEOUT_MS });
+      }, { timeoutMs: ADYEN_UNATTENDED_TIMEOUT_MS, label: 'Transaction status' });
       items = extractPaymentReceipt(statusResponse);
     }
 
@@ -1277,7 +1289,7 @@ app.post('/api/loyalty/read-card', async (req, res) => {
   };
 
   try {
-    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
+    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload, { label: 'Card read' });
     const acquisition = data?.SaleToPOIResponse?.CardAcquisitionResponse;
     const response = acquisition?.Response;
 
@@ -1348,7 +1360,7 @@ app.post('/api/loyalty/abort', async (req, res) => {
   };
 
   try {
-    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
+    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload, { label: 'Cancel card read' });
     res.json({ ok: true, adyenResponse: data });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1397,7 +1409,7 @@ app.post('/api/loyalty/release', async (req, res) => {
   };
 
   try {
-    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
+    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload, { label: 'Release card' });
     const parsed = readEnableServiceResult(data);
     const reason = [parsed.errorCondition, parsed.message].filter(Boolean).join(': ');
     res.json({
@@ -1473,7 +1485,7 @@ app.post('/api/loyalty/confirm', async (req, res) => {
   };
 
   try {
-    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
+    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload, { label: 'Confirmation' });
     const parsed = readInputResult(data);
 
     if (parsed.result !== 'Success') {
@@ -1517,6 +1529,41 @@ function settleLoyalty(order) {
   } catch (err) {
     console.warn(`Could not persist the redeemed points: ${err.message}`);
   }
+}
+
+// Turns a failed PaymentResponse into a line a cashier can act on. Neither half of
+// the raw answer is fit to show: ErrorCondition is a protocol enum ('Aborted',
+// 'Refusal'), and the terminal's own wording is buried in a form-encoded
+// AdditionalResponse. This lived inline in the webhook, so async payments got a
+// readable reason and sync ones got nothing at all -- which is why the sync overlay
+// fell back to printing the enum.
+const FAILURE_MESSAGES = {
+  Busy: 'Terminal busy \u2014 another transaction in progress',
+  Aborted: 'Transaction cancelled',
+  Cancel: 'Transaction cancelled',
+  Refusal: 'Payment declined',
+  NotFound: 'Transaction not found',
+  UnavailableService: 'Terminal service unavailable',
+  InvalidCard: 'Invalid card',
+  WrongPIN: 'Wrong PIN entered'
+};
+
+// Returns '' for a successful payment, so the caller can assign unconditionally and
+// have a later success clear a reason left over from an earlier attempt.
+function describeFailure(paymentResponse) {
+  const response = paymentResponse?.Response;
+  if (!response || response.Result === 'Success') return '';
+
+  const errorCondition = response.ErrorCondition || '';
+  const additional = response.AdditionalResponse || '';
+  let rawMessage = '';
+  try { rawMessage = new URLSearchParams(additional).get('message') || ''; } catch { /* not form-encoded */ }
+  if (!rawMessage) rawMessage = additional.match(/message=([^&]*)/)?.[1] || '';
+
+  // A merchant cancel is reported in the message rather than the ErrorCondition,
+  // so the text is checked before the enum is mapped.
+  if (/cancel/i.test(rawMessage)) return 'Transaction cancelled by merchant';
+  return FAILURE_MESSAGES[errorCondition] || rawMessage || errorCondition || 'Unknown error';
 }
 
 // --------------- API: Make Payment ---------------
@@ -1635,8 +1682,13 @@ app.post('/api/payment', async (req, res) => {
     }
   };
 
+  // Read back by /api/cancel, which must not let an abort overtake the payment it
+  // refers to. Set as late as possible so it measures the dispatch, not the
+  // validation above it.
+  order.dispatchedAt = Date.now();
+
   try {
-    const data = await adyenRequest(endpoint, payload);
+    const data = await adyenRequest(endpoint, payload, { label: 'Payment' });
 
     if (useAsync) {
       // Async: respond immediately; real result arrives via webhook
@@ -1646,16 +1698,20 @@ app.post('/api/payment', async (req, res) => {
     // Sync: process response
     const result = data?.SaleToPOIResponse?.PaymentResponse?.Response?.Result;
     const errorCondition = data?.SaleToPOIResponse?.PaymentResponse?.Response?.ErrorCondition;
-    // Preserve 'cancelled' status if cancel was already processed
-    if (order.status !== 'cancelled') {
-      if (result === 'Success') order.status = 'paid';
-      else if (errorCondition === 'Aborted' || errorCondition === 'Cancel') order.status = 'cancelled';
-      else order.status = 'failed';
-    }
+    // This is the authoritative outcome and it overwrites whatever the order said.
+    // It used to be skipped for an order already marked 'cancelled', which meant a
+    // cancel the terminal had ignored permanently hid a payment that went on to
+    // succeed: money taken, order shown as cancelled. Nothing marks an order
+    // cancelled ahead of this point any more -- /api/cancel only records that a
+    // cancel was asked for -- so the guard has nothing left to protect.
+    if (result === 'Success') order.status = 'paid';
+    else if (errorCondition === 'Aborted' || errorCondition === 'Cancel') order.status = 'cancelled';
+    else order.status = 'failed';
     order.response = data;
     settleLoyalty(order);
 
     const paymentResp = data?.SaleToPOIResponse?.PaymentResponse;
+    order.failureReason = describeFailure(paymentResp);
     const poiData = paymentResp?.POIData;
     if (poiData?.POITransactionID) {
       order.poiTransactionId = poiData.POITransactionID.TransactionID;
@@ -1669,25 +1725,22 @@ app.post('/api/payment', async (req, res) => {
     orderChanged(order);
     try { res.json({ order, adyenResponse: data }); } catch (_) { /* client may have disconnected */ }
   } catch (err) {
-    if (order.status !== 'cancelled') {
-      order.status = 'error';
-      order.error = err.message;
-    }
+    // No PaymentResponse arrived, so the terminal's state is unknown -- including
+    // whether a cancel that was asked for actually took. 'error' says exactly that,
+    // and leaves the order in the list for a status check to resolve.
+    order.status = 'error';
+    order.error = err.message;
     orderChanged(order);
     try { res.status(500).json({ error: err.message, orderId: transactionId }); } catch (_) { /* client disconnected */ }
   }
 });
 
 // --------------- API: Cancel (Abort) Payment ---------------
-app.post('/api/cancel', async (req, res) => {
-  const { serviceId } = req.body;
-  const order = orders.find(o => o.serviceId === serviceId);
-  const poiId = (order && order.terminalId) || getActivePoiId();
-
+function abortPayment(serviceId, poiId) {
   const header = makeHeader('Abort');
   header.POIID = poiId;
 
-  const payload = {
+  return adyenRequest('https://terminal-api-test.adyen.com/sync', {
     SaleToPOIRequest: {
       MessageHeader: header,
       AbortRequest: {
@@ -1700,18 +1753,114 @@ app.post('/api/cancel', async (req, res) => {
         }
       }
     }
-  };
+  }, { label: 'Cancel' });
+}
+
+// Waits for the payment an abort refers to to actually reach the terminal.
+//
+// /api/payment records the order, and then its dispatch time, only after it has
+// checked the terminal is reachable -- and that check is an await. A cancel pressed
+// during it finds nothing under the ServiceID, and sending on that basis is what
+// put the abort ahead of its own payment in the log.
+//
+// Polling is enough: the value being waited on is a field on an in-memory object
+// updated in the same process, so this costs a timer and nothing else.
+const DISPATCH_POLL_MS = 50;
+
+async function awaitDispatch(serviceId) {
+  const deadline = Date.now() + DEFAULT_DISPATCH_WAIT_MS;
+  while (Date.now() < deadline) {
+    await sleep(DISPATCH_POLL_MS);
+    const order = orders.find(o => o.serviceId === serviceId);
+    // Resolved while waiting -- most likely the reachability check refused the
+    // payment. Handing it back lets planCancel refuse the abort on its status.
+    if (order?.dispatchedAt || (order && order.status !== 'pending')) return order;
+  }
+  return orders.find(o => o.serviceId === serviceId) || null;
+}
+
+// Serviced in the background after /api/cancel has already replied, so the cashier
+// is not left watching a spinner while this runs. One entry per ServiceID, because
+// the endpoint can be called again by hand.
+const _abortLoops = new Set();
+
+async function keepAborting(serviceId, poiId) {
+  if (_abortLoops.has(serviceId)) return;
+  _abortLoops.add(serviceId);
+  try {
+    let attempt = 1;
+    while (shouldRetryAbort(orders.find(o => o.serviceId === serviceId), attempt, DEFAULT_ABORT_ATTEMPTS)) {
+      await sleep(DEFAULT_ABORT_RETRY_MS);
+      // Re-read after the wait: the PaymentResponse may have landed while it ran.
+      const order = orders.find(o => o.serviceId === serviceId);
+      if (!shouldRetryAbort(order, attempt, DEFAULT_ABORT_ATTEMPTS)) return;
+      attempt++;
+      try {
+        await abortPayment(serviceId, poiId);
+      } catch (err) {
+        // The payment is still being awaited elsewhere and will report the real
+        // outcome; a failed retry is not worth failing anything over.
+        console.warn(`[Cancel] retry ${attempt} for ${serviceId} failed: ${err.message}`);
+      }
+    }
+  } finally {
+    _abortLoops.delete(serviceId);
+  }
+}
+
+// This endpoint asks the terminal to stop; it does not decide the outcome. See
+// cancelPolicy.js for why an accepted abort is not a cancelled payment. The order
+// keeps its 'pending' status and only the PaymentResponse resolves it.
+app.post('/api/cancel', async (req, res) => {
+  const { serviceId } = req.body;
+  if (!serviceId) return res.status(400).json({ error: 'A serviceId is required' });
+
+  let order = orders.find(o => o.serviceId === serviceId);
+  let plan = planCancel(order);
+  if (!plan.ok) return res.status(409).json({ error: plan.reason, status: plan.status });
+
+  // The payment has not been recorded as sent yet, so there is nothing at the
+  // terminal for this abort to match.
+  if (plan.waitForDispatch) {
+    order = await awaitDispatch(serviceId);
+    plan = planCancel(order);
+    if (!plan.ok) return res.status(409).json({ error: plan.reason, status: plan.status });
+    // Still nothing after the wait: the payment was most likely never sent at all.
+    // An abort naming a ServiceID the terminal does not know is discarded without
+    // side effects, so it goes out rather than the cancel silently doing nothing.
+    if (plan.waitForDispatch) plan = { ok: true, delayMs: 0 };
+  }
+
+  // Holds the abort behind the payment when the two were sent within moments of
+  // each other. Without it the terminal receives an abort for a ServiceID it has
+  // not seen yet, drops it, and carries on taking the payment.
+  if (plan.delayMs > 0) await sleep(plan.delayMs);
+
+  const poiId = (order && order.terminalId) || getActivePoiId();
 
   try {
-    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
+    const data = await abortPayment(serviceId, poiId);
 
-    const cancelledOrder = orders.find(o => o.serviceId === serviceId);
-    if (cancelledOrder) {
-      cancelledOrder.status = 'cancelled';
-      cancelledOrder.cancelResponse = data;
-      orderChanged(cancelledOrder);
+    // The terminal can refuse the abort outright. Checked defensively because a
+    // bare acknowledgement carrying no Response at all is also a normal answer.
+    const abortResult = data?.SaleToPOIResponse?.AbortResponse?.Response?.Result;
+    const accepted = abortResult !== 'Failure';
+
+    if (order) {
+      // Not a status. The cashier needs to see that a cancel is in flight, but the
+      // sale is still live on the terminal until its PaymentResponse says otherwise.
+      order.cancelRequested = true;
+      order.cancelResponse = data;
+      orderChanged(order);
     }
-    res.json(data);
+
+    res.json({ ok: true, accepted, adyenResponse: data });
+
+    // Deliberately not awaited. A cancel pressed the instant the button appears can
+    // reach a terminal that has the payment but is not yet able to act on an abort,
+    // and the response cannot tell that apart from an abort that worked. Repeating
+    // while the order is still pending is what closes that window.
+    keepAborting(serviceId, poiId);
   } catch (err) {
     res.status(500).json({ error: err.message, code: err.code });
   }
@@ -1765,7 +1914,7 @@ app.post('/api/refund', async (req, res) => {
   };
 
   try {
-    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload, { timeoutMs: ADYEN_UNATTENDED_TIMEOUT_MS });
+    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload, { timeoutMs: ADYEN_UNATTENDED_TIMEOUT_MS, label: 'Refund' });
     const result = data?.SaleToPOIResponse?.ReversalResponse?.Response?.Result;
     if (result === 'Success') {
       order.refundedAmount = (order.refundedAmount || 0) + (amount || order.amount);
@@ -1823,7 +1972,7 @@ app.post('/api/refund/unreferenced', async (req, res) => {
   };
 
   try {
-    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload);
+    const data = await adyenRequest('https://terminal-api-test.adyen.com/sync', payload, { label: 'Refund' });
     const result = data?.SaleToPOIResponse?.PaymentResponse?.Response?.Result;
     if (result === 'Success') {
       order.refundedAmount = (order.refundedAmount || 0) + amount;
@@ -2184,28 +2333,7 @@ app.post('/api/webhook', (req, res) => {
         else if (errCond === 'Aborted' || errCond === 'Cancel') order.status = 'cancelled';
         else order.status = 'failed';
         settleLoyalty(order);
-        if (result !== 'Success') {
-          const friendlyMessages = {
-            'Busy': 'Terminal busy — another transaction in progress',
-            'Aborted': 'Transaction cancelled',
-            'Cancel': 'Transaction cancelled',
-            'Refusal': 'Payment declined',
-            'NotFound': 'Transaction not found',
-            'UnavailableService': 'Terminal service unavailable',
-            'InvalidCard': 'Invalid card',
-            'WrongPIN': 'Wrong PIN entered',
-          };
-          const additional = paymentResponse.Response?.AdditionalResponse || '';
-          let rawMsg = '';
-          try { rawMsg = new URLSearchParams(additional).get('message') || ''; } catch {}
-          if (!rawMsg) rawMsg = additional.match(/message=([^&]*)/)?.[1] || '';
-          // Check for known cancel patterns in raw message
-          if (rawMsg.match(/cancel/i) || rawMsg.match(/merchant\s*cancel/i)) {
-            order.failureReason = 'Transaction cancelled by merchant';
-          } else {
-            order.failureReason = friendlyMessages[errCond] || rawMsg || errCond || 'Unknown error';
-          }
-        }
+        order.failureReason = describeFailure(paymentResponse);
         order.response = body;
 
         const poiData = paymentResponse.POIData;

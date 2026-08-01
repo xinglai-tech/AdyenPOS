@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#1e293b" />
+  <meta name="theme-color" content="#1d1d1f" />
   <meta name="description" content="POS Web App with Adyen Terminal Integration" />
   <link rel="manifest" href="/manifest.json" />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛒</text></svg>" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231d1d1f' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z'/><path d='M3 6h18'/><path d='M16 10a4 4 0 0 1-8 0'/></svg>" />
   <title>POS System</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -22,11 +22,12 @@
         <h2>Orders</h2>
         <div class="panel-header-right">
           <span id="order-count" class="badge">0</span>
-          <button id="btn-clear-orders" class="btn-clear-orders" title="Clear all orders">✕</button>
+          <button id="btn-clear-orders" class="btn-clear-orders" title="Clear all orders" aria-label="Clear all orders"><i data-lucide="x"></i></button>
           <button id="btn-orders-close" class="btn-orders-close" title="Close">Close</button>
         </div>
       </div>
       <div class="order-search">
+        <i data-lucide="search" class="order-search-icon"></i>
         <input id="order-search-input" type="text" placeholder="Search PSP / ServiceID / Tender..." />
       </div>
       <div id="order-list" class="order-list">
@@ -40,7 +41,7 @@
         <!-- Left: Products + Settings + Cart -->
         <div id="left-col">
           <div id="notification-row">
-            <button id="btn-orders-toggle" class="btn-orders-toggle" title="Show orders">☰ Orders</button>
+            <button id="btn-orders-toggle" class="btn-orders-toggle" title="Show orders"><i data-lucide="menu"></i>Orders</button>
             <div id="notification-bar" class="notification-bar notification-idle">&nbsp;</div>
             <button id="btn-logout" class="btn-logout">Logout</button>
           </div>
@@ -49,7 +50,7 @@
               <div class="settings-inner">
                 <!-- Terminal List -->
                 <div class="settings-group">
-                  <div class="settings-label settings-label-plain">Current Terminal</div>
+                  <div class="settings-label">Current Terminal</div>
                   <div id="terminal-list" class="terminal-list"></div>
                 </div>
                 <!-- Action buttons -->
@@ -72,9 +73,11 @@
                 </div>
                 <!-- Async transaction status: inside the panel so the API log does not squeeze it -->
                 <div id="terminal-display" class="terminal-display" style="display:none">
-                  <div class="settings-label">Transaction Status</div>
+                  <div class="terminal-display-head">
+                    <div class="settings-label">Transaction Status</div>
+                    <button id="btn-clear-display" class="btn-clear-display" title="Clear log" aria-label="Clear log"><i data-lucide="x"></i></button>
+                  </div>
                   <div id="terminal-display-content" class="terminal-display-content">
-                    <button id="btn-clear-display" class="btn-clear-display" title="Clear log">✕</button>
                     <span class="terminal-display-idle">Idle</span>
                   </div>
                 </div>
@@ -106,9 +109,9 @@
           <section id="response-section">
             <div class="response-header">
               <h3 class="section-title">API Log</h3>
+              <button id="btn-clear-response" class="btn-clear-log" title="Clear log">Clear</button>
             </div>
             <div class="response-wrapper">
-              <button id="btn-clear-response" class="btn-clear-log" title="Clear log">Clear</button>
               <div id="api-response" class="api-response"><span class="log-empty">No response yet</span></div>
             </div>
           </section>

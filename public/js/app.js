@@ -267,9 +267,14 @@ function setupSSE() {
   // what went out and not only what came back. It arrives while the call is still
   // in flight, so it lands just below its own response once that is logged.
   es.addEventListener('apiRequest', (e) => {
-    const { category, endpoint, payload } = JSON.parse(e.data);
+    const { label, endpoint, payload } = JSON.parse(e.data);
+    // The server names each call, and the response below is logged under the same
+    // name, so a request and its answer read as a pair. The endpoint used to be
+    // appended -- "Payment · sync" against a response titled "Payment (Sync)" --
+    // but that suffix is a URL path segment, it is 'sync' for every call except an
+    // async payment, and it made the two halves look unrelated.
     const route = String(endpoint || '').split('/').pop();
-    showApiResponse(route ? `${category} · ${route}` : category, payload, 'request');
+    showApiResponse(label || route || 'Terminal API', payload, 'request');
   });
 
   es.addEventListener('ordersCleared', () => {
@@ -290,14 +295,20 @@ function setupSSE() {
     renderOrders();
     // Log payment response via SSE only for async/cancel (sync already logs it)
     if (order.response && !hadResponse && !state._syncLogged?.[order.serviceId]) {
-      showApiResponse('Payment Response', order.response);
+      showApiResponse('Payment', order.response);
     }
-    // If overlay is waiting for this order's final response, close it
-    if (state.pendingServiceId && order.serviceId === state.pendingServiceId && order.status !== 'pending') {
-      const success = order.status === 'paid';
-      const msg = success ? 'Payment successful' : `Payment ${order.status}`;
+    // If overlay is waiting for this order's final response, close it.
+    //
+    // Skipped while a request that will report the outcome itself is still in
+    // flight for this order. The server broadcasts the update before it replies, so
+    // this always arrived first and wrote its own wording, which the reply then
+    // overwrote a moment later -- the cashier saw "Payment cancelled" replaced by
+    // "Aborted". This branch is for async mode and recovered orders, where nothing
+    // else is going to report anything.
+    if (state.pendingServiceId && order.serviceId === state.pendingServiceId
+        && order.status !== 'pending' && state._overlayOwner !== order.serviceId) {
       // showOverlayResult schedules its own close, so no timer is needed here.
-      showOverlayResult(success, msg);
+      showOverlayResult(order.status === 'paid', paymentOutcomeMessage(order));
       state.pendingServiceId = null;
     }
   });
@@ -631,6 +642,12 @@ function renderOrders() {
     const blocked = orderActionBlock(o);
     const off = blocked ? ' disabled' : '';
 
+    // A cancellation is not a failure. The reason for one only ever restates the
+    // badge sitting next to it -- "Cancelled" above "Transaction cancelled" -- and
+    // red on the card is meant for the orders a cashier still has to do something
+    // about. The full reason stays in the detail dialog.
+    const reason = o.status === 'cancelled' ? '' : o.failureReason;
+
     // The ServiceID, the payment method and the basket are left to the detail
     // dialog. What stays is what an order is looked up by, and each reference gets
     // its own line: sharing one truncated all of them.
@@ -638,16 +655,16 @@ function renderOrders() {
       <div class="order-card" data-order-id="${escapeHtml(o.id)}">
         <div class="order-card-header">
           <span class="order-card-amount">${cur} ${(o.amount || 0).toFixed(2)}</span>
-          <span class="status status-${o.status}">${formatStatus(o.status)}</span>
+          <span class="status status-${o.status}">${orderStatusLabel(o)}</span>
         </div>
-        ${o.failureReason ? `<div class="order-card-reason">${escapeHtml(o.failureReason)}</div>` : ''}
+        ${reason ? `<div class="order-card-reason">${escapeHtml(reason)}</div>` : ''}
         ${o.pspReference ? `<div class="order-card-line order-card-psp">PSP: ${escapeHtml(o.pspReference)}</div>` : ''}
         <div class="order-card-line order-card-terminal">${escapeHtml(o.terminalId || '—')}</div>
         <div class="order-card-line order-card-time">${escapeHtml(time)}</div>
         ${o.status === 'pending' && !o.viaTapToPay ? `
           <div class="order-card-actions">
             ${withActionTip(`<button class="btn-check-order" onclick="queryOrderStatus('${o.serviceId}', this)"${off}><i data-lucide="search"></i>Check Status</button>`, blocked)}
-            ${withActionTip(`<button class="btn-cancel-order" onclick="cancelOrder('${o.serviceId}', this)"${off}><i data-lucide="x"></i>Cancel</button>`, blocked)}
+            ${withActionTip(`<button class="btn-cancel-order" onclick="cancelOrder('${o.serviceId}', this)"${o.cancelRequested ? ' disabled' : off}><i data-lucide="x"></i>${o.cancelRequested ? 'Cancelling…' : 'Cancel'}</button>`, blocked)}
           </div>` : ''}
         ${canRefund || canReprint ? `
           <div class="order-card-actions">
@@ -677,13 +694,14 @@ function renderOrderDetail(order) {
   const loyalty = order.loyalty;
 
   const payment = [
-    // The two fields the card no longer shows.
-    detailRow('ServiceID', order.serviceId),
+    // The two fields the card no longer shows. `is-ref` marks the values that are
+    // machine identifiers, which are the only ones set in monospace.
+    detailRow('ServiceID', order.serviceId, ' is-ref'),
     detailRow('Payment method', order.paymentBrand ? formatBrand(order.paymentBrand) : ''),
     // Card payments only: the first six and last four digits, as the terminal
     // returned them. Absent for a wallet, so the row disappears by itself.
-    detailRow('Card', order.maskedPan),
-    detailRow('Status', formatStatus(order.status)),
+    detailRow('Card', order.maskedPan, ' is-ref'),
+    detailRow('Status', orderStatusLabel(order)),
     detailRow('Time', order.createdAt ? new Date(order.createdAt).toLocaleString() : ''),
     detailRow('Entry', order.viaTapToPay ? 'Tap to Pay' : ''),
     // Only worth a row once something has actually been refunded.
@@ -691,18 +709,18 @@ function renderOrderDetail(order) {
   ].join('');
 
   const references = [
-    detailRow('PSP reference', order.pspReference),
-    detailRow('Tender reference', order.tenderReference),
-    detailRow('Terminal', order.terminalId)
+    detailRow('PSP reference', order.pspReference, ' is-ref'),
+    detailRow('Tender reference', order.tenderReference, ' is-ref'),
+    detailRow('Terminal', order.terminalId, ' is-ref')
   ].join('');
 
   // A redemption is the only part of an order that names a person, so it gets its
   // own section rather than being buried among the references.
   const member = loyalty ? [
-    detailRow('Customer', loyalty.displayName, ' is-loyalty'),
-    detailRow('Points redeemed', `${loyalty.pointsUsed} pts`, ' is-loyalty'),
-    detailRow('Basket before discount', money(loyalty.originalAmount), ' is-loyalty'),
-    detailRow('Paid by card', money(order.amount), ' is-loyalty')
+    detailRow('Customer', loyalty.displayName),
+    detailRow('Points redeemed', `${loyalty.pointsUsed} pts`),
+    detailRow('Basket before discount', money(loyalty.originalAmount)),
+    detailRow('Paid by card', money(order.amount))
   ].join('') : '';
 
   const items = (order.items || []).map(i =>
@@ -712,7 +730,7 @@ function renderOrderDetail(order) {
   $orderDetailBody.innerHTML = `
     <div class="order-detail-head">
       <span class="order-detail-amount">${money(order.amount)}</span>
-      <span class="status status-${order.status}">${formatStatus(order.status)}</span>
+      <span class="status status-${order.status}">${orderStatusLabel(order)}</span>
     </div>
     ${order.failureReason || order.error ? `
       <div class="order-detail-section">
@@ -798,7 +816,7 @@ async function reprintReceipt(serviceId, btn) {
       body: JSON.stringify({ serviceId })
     });
     const data = await res.json();
-    showApiResponse('Reprint Receipt', data.adyenResponse || data);
+    showApiResponse('Print receipt', data.adyenResponse || data);
     if (res.ok) {
       showToast('Receipt sent to the terminal', 'success');
     } else {
@@ -819,6 +837,30 @@ function formatStatus(s) {
     refunded: 'Refunded', partially_refunded: 'Partial Refund', refund_failed: 'Refund Failed'
   };
   return map[s] || s;
+}
+
+// An asked-for cancel is not a cancelled sale: the terminal may be past the point
+// of no return, and only its PaymentResponse settles the order. This reports the
+// request without pretending it succeeded.
+function orderStatusLabel(order) {
+  if (order.status === 'pending' && order.cancelRequested) return 'Cancelling';
+  return formatStatus(order.status);
+}
+
+// The one place a settled order is turned into the line shown on the payment
+// overlay. There were two: the sync path read ErrorCondition straight out of the
+// Adyen response and put protocol enums like "Aborted" in front of the cashier,
+// while the SSE path built its own phrasing from the status. `failureReason` is
+// already a finished sentence from the server, so it is shown as-is rather than
+// appended to a prefix that would repeat it.
+function paymentOutcomeMessage(order) {
+  if (order.status === 'paid') return 'Payment successful';
+  if (order.failureReason) return order.failureReason;
+  return {
+    cancelled: 'Payment cancelled',
+    failed: 'Payment failed',
+    error: 'Payment did not complete'
+  }[order.status] || `Payment ${formatStatus(order.status).toLowerCase()}`;
 }
 
 function formatBrand(brand) {
@@ -1149,9 +1191,12 @@ function renderLogoPreview(data) {
 
 function renderQrSettings(data) {
   $inputQrUrl.value = data.qrUrl || '';
-  $qrMeta.textContent = data.qrUrl === data.qrUrlDefault
-    ? 'Default content'
-    : `Custom content · default is ${data.qrUrlDefault}`;
+  // Nothing to say when the field holds the default: the input above already shows
+  // it. The note is only worth the line when the content has been changed, where it
+  // is the one place the original is still recoverable from.
+  const isDefault = data.qrUrl === data.qrUrlDefault;
+  $qrMeta.textContent = isDefault ? '' : `Custom content · default is ${data.qrUrlDefault}`;
+  $qrMeta.hidden = isDefault;
 }
 
 async function loadReceiptSettings() {
@@ -1365,7 +1410,7 @@ async function loyaltyAbortRead() {
       body: JSON.stringify({ serviceId: _loyalty.serviceId })
     });
     const data = await res.json();
-    showApiResponse('Abort (CardAcquisition)', data.adyenResponse || data);
+    showApiResponse('Cancel card read', data.adyenResponse || data);
     if (!res.ok) {
       loyaltyStep(data.error || 'Could not cancel the card read', 'error');
       return;
@@ -1389,7 +1434,7 @@ async function loyaltyRelease(message = null) {
       body: JSON.stringify(message || {})
     });
     const data = await res.json();
-    showApiResponse('EnableService (AbortTransaction)', data.adyenResponse || data);
+    showApiResponse('Release card', data.adyenResponse || data);
     if (!res.ok || !data.ok) {
       // Leave the panel open: the terminal is still holding the card, and hiding
       // that would just look like the app had finished.
@@ -1445,7 +1490,7 @@ async function loyaltyReadCard() {
     const data = await res.json();
     _loyalty.reading = false;
     $btnLoyaltyCancel.classList.add('hidden');
-    showApiResponse('CardAcquisition', data.adyenResponse || data);
+    showApiResponse('Card read', data.adyenResponse || data);
 
     if (!res.ok) {
       loyaltyStep(data.error || 'The card could not be read', 'error');
@@ -1487,7 +1532,7 @@ async function loyaltyReadCard() {
       body: JSON.stringify({ memberId: data.member.id, amount: _loyalty.amount, currency })
     });
     const confirmData = await confirmRes.json();
-    showApiResponse('Input (GetConfirmation)', confirmData.adyenResponse || confirmData);
+    showApiResponse('Confirmation', confirmData.adyenResponse || confirmData);
 
     if (!confirmRes.ok) {
       loyaltyStep(confirmData.error || 'The question was not answered', 'error');
@@ -1697,7 +1742,7 @@ async function checkTerminal(opts) {
   try {
     const res = await fetch('/api/terminals', { method: 'POST' });
     const data = await res.json();
-    if (!silent) showApiResponse('Connected Terminals', data);
+    if (!silent) showApiResponse('Connected terminals', data);
     const onlineList = data.uniqueTerminalIds || [];
     state._terminalOnlineSet = new Set(onlineList);
     state._terminalChecked = true;
@@ -1754,7 +1799,7 @@ async function confirmAddTerminal() {
       body: JSON.stringify({ poiId: newPoiId })
     });
     const data = await res.json();
-    showApiResponse('Add Terminal', data);
+    showApiResponse('Add terminal', data);
 
     if (!res.ok) {
       $addTermError.textContent = data.error || 'Add failed';
@@ -1793,7 +1838,7 @@ async function recoverPendingOrders() {
         body: JSON.stringify({ serviceId: order.serviceId })
       });
       const data = await res.json();
-      showApiResponse(`TransactionStatus [${order.serviceId}]`, data);
+      showApiResponse('Transaction status', data);
 
       const statusResp = data?.SaleToPOIResponse?.TransactionStatusResponse;
       const result = statusResp?.Response?.Result;
@@ -1874,6 +1919,9 @@ async function paySync(body) {
   state.pendingServiceId = body.serviceId;
   if (!state._syncLogged) state._syncLogged = {};
   state._syncLogged[body.serviceId] = true;
+  // Claims the overlay for this call, so the SSE order update -- which the server
+  // sends before it replies -- leaves the outcome to the reply below.
+  state._overlayOwner = body.serviceId;
 
   try {
     const controller = new AbortController();
@@ -1889,23 +1937,20 @@ async function paySync(body) {
     const data = await res.json();
     state.pendingServiceId = null;
     state._abortController = null;
-    showApiResponse('Payment (Sync)', data.adyenResponse || data);
+    state._overlayOwner = null;
+    showApiResponse('Payment', data.adyenResponse || data);
 
     if (data.order) {
-      if (data.order.status === 'paid') {
-        showOverlayResult(true, 'Payment Successful!');
-        clearCart();
-      } else {
-        const resp = data.adyenResponse?.SaleToPOIResponse?.PaymentResponse?.Response;
-        const reason = resp?.ErrorCondition || resp?.AdditionalResponse || 'Payment declined';
-        showOverlayResult(false, reason);
-      }
+      const paid = data.order.status === 'paid';
+      showOverlayResult(paid, paymentOutcomeMessage(data.order));
+      if (paid) clearCart();
     } else if (data.error) {
       syncTerminalStateFromError(data);
       showOverlayResult(false, data.error);
     }
   } catch (err) {
     state._abortController = null;
+    state._overlayOwner = null;
     if (err.name === 'AbortError') {
       // User cancelled the fetch — allow SSE to log the response
       if (state._syncLogged) delete state._syncLogged[body.serviceId];
@@ -1924,7 +1969,10 @@ async function payAsync(body) {
       body: JSON.stringify(body)
     });
     const data = await res.json();
-    showApiResponse('Payment (Async)', data);
+    // Not 'Payment': this is our own server acknowledging the submission, not the
+    // terminal's answer. That arrives later over SSE and is logged as 'Payment',
+    // which is the entry that actually pairs with the request.
+    showApiResponse('Payment submitted', data);
 
     if (data.orderId) {
       showToast('Payment submitted — waiting for terminal response', 'info');
@@ -1953,7 +2001,7 @@ async function queryOrderStatus(serviceId, btnEl) {
       body: JSON.stringify({ serviceId })
     });
     const data = await res.json();
-    showApiResponse(`TransactionStatus [${serviceId}]`, data);
+    showApiResponse('Transaction status', data);
 
     // A refused or timed-out call carries no TransactionStatusResponse at all, so
     // without this the failure passed silently and the button just re-enabled.
@@ -2006,13 +2054,18 @@ async function cancelOrder(serviceId, btnEl) {
       body: JSON.stringify({ serviceId })
     });
     const data = await res.json();
-    showApiResponse(`Cancel [${serviceId}]`, data);
+    showApiResponse(cancelTitle(data.adyenResponse), data.adyenResponse || data);
     if (!res.ok) {
       syncTerminalStateFromError(data);
       showRequestError(data, 'Cancel failed');
       return;
     }
-    showToast('Cancel request sent', 'info');
+    // Deliberately not 'Cancelled'. The terminal may be past the point of no
+    // return, in which case the sale completes and its PaymentResponse -- not this
+    // reply -- settles the order.
+    showToast(data.accepted
+      ? 'Cancelling — waiting for the terminal'
+      : 'The terminal refused the cancel — check the order status', data.accepted ? 'info' : 'warning');
   } catch (err) {
     showToast(`Cancel failed: ${err.message}`, 'error');
   } finally {
@@ -2028,17 +2081,22 @@ async function checkTransactionStatus() {
     return;
   }
 
+  const serviceId = state.pendingServiceId;
+
   try {
     $btnCheckStatus.disabled = true;
     $btnCheckStatus.textContent = 'Checking...';
+    // Same claim paySync makes: this call resolves the order server-side, so its
+    // SSE update must not race the wording chosen below.
+    state._overlayOwner = serviceId;
 
     const res = await fetch('/api/transaction-status', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ serviceId: state.pendingServiceId })
+      body: JSON.stringify({ serviceId })
     });
     const data = await res.json();
-    showApiResponse(`TransactionStatus [${state.pendingServiceId}]`, data);
+    showApiResponse('Transaction status', data);
 
     const statusResp = data?.SaleToPOIResponse?.TransactionStatusResponse;
     const result = statusResp?.Response?.Result;
@@ -2047,15 +2105,16 @@ async function checkTransactionStatus() {
       // Transaction completed — check repeated response
       const paymentResp = statusResp?.RepeatedMessageResponse?.RepeatedResponseMessageBody?.PaymentResponse;
       if (paymentResp) {
-        const payResult = paymentResp.Response?.Result;
-        if (payResult === 'Success') {
-          showOverlayResult(true, 'Payment Successful!');
-          clearCart();
-        } else {
-          const errCond = paymentResp.Response?.ErrorCondition;
-          const msg = (errCond === 'Aborted' || errCond === 'Cancel') ? 'Payment Cancelled' : 'Payment Failed';
-          showOverlayResult(false, msg);
-        }
+        // The server resolved the order from this same response and pushed it over
+        // SSE, so the settled copy in state carries the status and the readable
+        // reason. Reading it back keeps one vocabulary for the outcome instead of a
+        // third phrasing built from the raw ErrorCondition here.
+        const paid = paymentResp.Response?.Result === 'Success';
+        const settled = state.orders.find(o => o.serviceId === serviceId);
+        showOverlayResult(paid, settled
+          ? paymentOutcomeMessage(settled)
+          : (paid ? 'Payment successful' : 'Payment failed'));
+        if (paid) clearCart();
         state.pendingServiceId = null;
       }
     } else if (result === 'Failure') {
@@ -2071,6 +2130,9 @@ async function checkTransactionStatus() {
   } catch (err) {
     showToast(`Status check failed: ${err.message}`, 'error');
   } finally {
+    // Only if nothing else holds it: this button is reachable while a sync payment
+    // is still waiting on the same order, and that call needs its claim kept.
+    if (!state._abortController) state._overlayOwner = null;
     $btnCheckStatus.disabled = false;
     $btnCheckStatus.textContent = 'Check Status';
   }
@@ -2096,20 +2158,31 @@ async function cancelPayment() {
       body: JSON.stringify({ serviceId: state.pendingServiceId })
     });
     const cancelData = await cancelRes.json();
-    showApiResponse('Cancel (Abort)', cancelData);
+    showApiResponse(cancelTitle(cancelData.adyenResponse), cancelData.adyenResponse || cancelData);
 
-    // Abort the pending sync fetch if exists
-    if (state._abortController) {
-      state._abortController.abort();
-    } else {
-      // Recovery scenario: keep overlay open, wait for original transaction response via SSE
-      $overlayMsg.textContent = 'Waiting for terminal response...';
+    if (!cancelRes.ok) {
+      syncTerminalStateFromError(cancelData);
+      showToast(cancelData.error || 'Cancel failed', 'error');
+      $btnCancelPay.disabled = false;
+      $btnCancelPay.textContent = 'Cancel Payment';
+      return;
     }
 
-    showToast('Cancel request sent', 'warning');
+    // The in-flight /api/payment fetch used to be aborted here, which threw away
+    // the one message that says what the terminal actually did. If the abort came
+    // too late the shopper still pays, and the overlay had already claimed the
+    // sale was cancelled. It now stays open until the PaymentResponse arrives.
+    $overlayMsg.textContent = cancelData.accepted
+      ? 'Cancelling — waiting for the terminal'
+      : 'The terminal refused the cancel — the sale may still complete';
+
+    // Left disabled, and named for what is still happening rather than for the one
+    // message that has gone out: the server repeats the abort until the terminal
+    // settles the order, so this is not finished at the point it is shown.
+    $btnCancelPay.textContent = 'Cancelling…';
+    showToast('Cancelling — waiting for the terminal', 'warning');
   } catch (err) {
     showToast(`Cancel failed: ${err.message}`, 'error');
-  } finally {
     $btnCancelPay.disabled = false;
     $btnCancelPay.textContent = 'Cancel Payment';
   }
@@ -2200,7 +2273,7 @@ async function executeRefund() {
       body: JSON.stringify({ orderId: _refundOrderId, amount })
     });
     data = await res.json();
-    showApiResponse(`Refund (${refundType})`, data.adyenResponse || data);
+    showApiResponse('Refund', data.adyenResponse || data);
 
     if (data.order && (data.order.status === 'refunded' || data.order.status === 'partially_refunded')) {
       const msg = data.order.status === 'refunded'
@@ -2310,6 +2383,20 @@ function summariseReceipts(key, value) {
   return value;
 }
 
+// Inlined rather than `data-lucide` placeholders: entries arrive several times per
+// payment, and lucide.createIcons() rescans the whole document on every call.
+const LOG_CHEVRON_SVG = '<svg class="log-entry-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+const LOG_COPY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="13" height="13" x="9" y="9" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+
+// Adyen answers an AbortRequest with the plain text 'ok' rather than a
+// SaleToPOIResponse, which arrives here as { raw: 'ok', status: 200 } because there
+// was no JSON to parse. That is an acknowledgement that the abort message was
+// taken, and specifically not a statement that the payment stopped -- the
+// PaymentResponse decides that, later. The title says only what the reply says.
+function cancelTitle(adyenResponse) {
+  return adyenResponse?.raw === 'ok' ? 'Cancel received' : 'Cancel';
+}
+
 function showApiResponse(label, data, direction = 'response') {
   const time = new Date().toLocaleTimeString();
   const json = JSON.stringify(data, summariseReceipts, 2);
@@ -2321,42 +2408,70 @@ function showApiResponse(label, data, direction = 'response') {
   const isRequest = direction === 'request';
 
   const entry = document.createElement('div');
-  entry.className = `log-entry log-entry-${isRequest ? 'request' : 'response'}`;
+  // Collapsed on arrival. Entries land unprompted, several per payment, and an
+  // expanded payload is long enough to push whatever was being read off screen.
+  entry.className = `log-entry log-entry-${isRequest ? 'request' : 'response'} is-collapsed`;
 
   const header = document.createElement('div');
   header.className = 'log-entry-header';
+  header.setAttribute('role', 'button');
+  header.tabIndex = 0;
+  header.setAttribute('aria-expanded', 'false');
+  header.title = 'Show payload';
+  header.insertAdjacentHTML('beforeend', LOG_CHEVRON_SVG);
+
+  // Three letters, not an arrow: ↑ and ↓ are mirror images that differ on a single
+  // axis, so at this size the direction had to be worked out rather than read.
+  const tag = document.createElement('span');
+  tag.className = 'log-entry-tag';
+  tag.textContent = isRequest ? 'REQ' : 'RES';
+  tag.title = isRequest ? 'Request' : 'Response';
 
   const title = document.createElement('span');
   title.className = 'log-entry-title';
+  title.textContent = label;
+  // The header truncates rather than wraps, so keep the full label reachable.
+  title.title = label;
 
-  // The direction is a separate coloured element rather than part of the text, so
-  // a request and its response can be told apart at a glance while scrolling.
-  const tag = document.createElement('span');
-  tag.className = 'log-entry-tag';
-  tag.textContent = isRequest ? '\u2191 REQUEST' : '\u2193 RESPONSE';
-  title.appendChild(tag);
-  title.appendChild(document.createTextNode(`${label} [${time}]`));
+  // Out of the title and right-aligned: it is the same width on every row, so it
+  // costs the label nothing once it stops sharing the same text node.
+  const timeEl = document.createElement('span');
+  timeEl.className = 'log-entry-time';
+  timeEl.textContent = time;
 
-  const toggleBtn = document.createElement('button');
-  toggleBtn.className = 'log-entry-toggle';
-  toggleBtn.textContent = '−';
-  toggleBtn.addEventListener('click', () => {
-    const body = entry.querySelector('.log-entry-body');
-    const collapsed = body.classList.toggle('collapsed');
-    toggleBtn.textContent = collapsed ? '+' : '−';
+  // Copying used to be a double-click on the payload, which nothing advertised and
+  // which fought with selecting a single field out of the JSON.
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'log-entry-copy';
+  copyBtn.type = 'button';
+  copyBtn.title = 'Copy JSON';
+  copyBtn.setAttribute('aria-label', 'Copy JSON');
+  copyBtn.innerHTML = LOG_COPY_SVG;
+  copyBtn.addEventListener('click', (e) => {
+    // The button sits inside the disclosure control, so its click must not also
+    // open the entry.
+    e.stopPropagation();
+    copyToClipboard(json);
   });
 
-  header.appendChild(title);
-  header.appendChild(toggleBtn);
+  header.append(tag, title, timeEl, copyBtn);
+
+  const toggle = () => {
+    const collapsed = entry.classList.toggle('is-collapsed');
+    header.setAttribute('aria-expanded', String(!collapsed));
+    header.title = collapsed ? 'Show payload' : 'Hide payload';
+  };
+  header.addEventListener('click', toggle);
+  header.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggle();
+    }
+  });
 
   const body = document.createElement('pre');
   body.className = 'log-entry-body';
   body.textContent = json;
-  body.title = 'Double-click to copy';
-  body.addEventListener('dblclick', () => {
-    window.getSelection()?.removeAllRanges();
-    copyToClipboard(body.textContent);
-  });
 
   entry.appendChild(header);
   entry.appendChild(body);
@@ -2714,7 +2829,7 @@ async function ttpStartPayment() {
     });
     const data = await res.json();
     if (!res.ok) {
-      showApiResponse('Tap to Pay request error', data);
+      showApiResponse('Tap to Pay — payment request', data);
       ttpMessage(`Error: ${data.error || 'request failed'}`, 'error');
       return;
     }
@@ -2731,7 +2846,7 @@ async function ttpLookupInstance(installationId) {
   const store = (TTP.storeInput && TTP.storeInput.value.trim()) || localStorage.getItem('ttp_storeId') || '';
   const res = await fetch(`/api/taptopay/instances?storeId=${encodeURIComponent(store)}`);
   const data = await res.json();
-  showApiResponse('Tap to Pay app instances', data);
+  showApiResponse('Tap to Pay — app instances', data);
   if (!res.ok) throw new Error(data.error || 'could not list app instances');
   const list = data.paymentsApps || data.data || (Array.isArray(data) ? data : []);
   const match = Array.isArray(list)
@@ -2750,7 +2865,7 @@ async function ttpRevoke() {
       body: JSON.stringify({ installationId })
     });
     const data = await res.json();
-    showApiResponse('Tap to Pay revoke', data);
+    showApiResponse('Tap to Pay — revoke', data);
     if (!res.ok) {
       ttpMessage(`Revoke failed: ${data.error || 'request failed'}`, 'error');
       showToast(`Revoke failed: ${data.error || ''}`, 'error');
@@ -2811,7 +2926,7 @@ async function handleTtpReturn() {
       clean(); return true;
     }
     if (!boardingRequestToken) {
-      showApiResponse('Tap to Pay boarding (check)', all);
+      showApiResponse('Tap to Pay — boarding result', all);
       openTtpModal();
       ttpMessage('Boarding check returned no token. See API log.', 'error');
       showToast('Boarding check returned no token', 'error');
@@ -2825,7 +2940,7 @@ async function handleTtpReturn() {
       });
       const data = await res.json();
       if (!res.ok || !data.boardingToken) {
-        showApiResponse('Tap to Pay boarding-token error', data);
+        showApiResponse('Tap to Pay — boarding token', data);
         openTtpModal();
         ttpMessage(`Boarding failed: ${data.error || 'no token'}`, 'error');
         showToast(`Boarding failed: ${data.error || 'no token'}`, 'error');
@@ -2853,7 +2968,7 @@ async function handleTtpReturn() {
       ttpMessage('Device boarded successfully.', 'info');
       showToast('Device boarded successfully', 'success');
     } else {
-      showApiResponse('Tap to Pay boarding (finish)', all);
+      showApiResponse('Tap to Pay — boarding result', all);
       ttpMessage(`Boarding failed: ${error || 'unknown error'}`, 'error');
       showToast(`Boarding failed: ${error || 'unknown error'}`, 'error');
     }
@@ -2873,7 +2988,7 @@ async function handleTtpReturn() {
     const encrypted = rawFrom('response');
     const securityTrailer = rawFrom('securityTrailer');
     // Log the raw incoming App Link before we wipe the URL.
-    showApiResponse('Tap to Pay App Link (pay)', {
+    showApiResponse('Tap to Pay — payment link', {
       appLink: window.location.href,
       pathAndQuery: window.location.pathname + window.location.search,
       params: all
@@ -2887,12 +3002,11 @@ async function handleTtpReturn() {
           body: JSON.stringify({ response: encrypted, securityTrailer })
         });
         const data = await res.json();
+        showApiResponse('Tap to Pay — payment result', data);
         if (!res.ok) {
-          showApiResponse('Tap to Pay result (decrypt error)', data);
           ttpMessage(`Could not decrypt response: ${data.error || 'error'}`, 'error');
           return true;
         }
-        showApiResponse('Tap to Pay result (full)', data);
         const pr = data.response?.SaleToPOIResponse?.PaymentResponse;
         if (data.result === 'Success') {
           const amt = pr?.PaymentResult?.AmountsResp;
@@ -2909,7 +3023,7 @@ async function handleTtpReturn() {
       return true;
     }
     // No encrypted payload — show whatever came back
-    showApiResponse('Tap to Pay result', all);
+    showApiResponse('Tap to Pay — payment result', all);
     const detail = Object.keys(all).length ? JSON.stringify(all, null, 2) : '(no parameters returned)';
     ttpMessage(`Returned from Payments app:\n\n${detail}`, 'info', true);
     showToast('Tap to Pay returned — see the dialog', 'info');

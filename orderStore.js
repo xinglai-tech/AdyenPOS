@@ -56,7 +56,9 @@ const CORE_FIELDS = [
   'id', 'serviceId', 'status', 'createdAt', 'amount', 'currency', 'items',
   'terminalId', 'poiTransactionId', 'poiTimestamp', 'pspReference',
   'tenderReference', 'paymentBrand', 'maskedPan', 'refundedAmount', 'failureReason',
-  'error', 'viaTapToPay', 'loyalty'
+  // A pending order that survives a restart has to remember that a cancel was
+  // already sent, or the list offers to send a second one.
+  'error', 'viaTapToPay', 'loyalty', 'cancelRequested'
 ];
 
 // Newest first is the order the app shows, and Table Storage can only scan a
