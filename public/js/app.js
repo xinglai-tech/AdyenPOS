@@ -653,7 +653,7 @@ function renderOrders() {
         </div>
         ${reason ? `<div class="order-card-reason">${escapeHtml(reason)}</div>` : ''}
         ${o.pspReference ? `<div class="order-card-line order-card-psp">PSP: ${escapeHtml(o.pspReference)}</div>` : ''}
-        <div class="order-card-line order-card-terminal">${escapeHtml(o.terminalId || '—')}</div>
+        <div class="order-card-line order-card-terminal${o.viaTapToPay ? ' is-route' : ''}">${o.viaTapToPay ? 'Tap to Pay' : escapeHtml(o.terminalId || '—')}</div>
         <div class="order-card-line order-card-time">${escapeHtml(time)}</div>
         ${o.status === 'pending' && !o.viaTapToPay ? `
           <div class="order-card-actions">

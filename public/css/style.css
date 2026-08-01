@@ -294,6 +294,11 @@ html, body {
    most of the way towards --body-muted-on-dark so it sits at the same visual
    weight as the timestamp and the hue is all that distinguishes it. */
 .order-card-terminal { color: #93b9de; }
+/* Tap to Pay orders name the payment route here instead of a terminal, because the
+   id they carry is the Payments app installation rather than a till anyone would
+   recognise. That makes the line prose, so it leaves the monospace behind for the
+   same reason the timestamp below does. */
+.order-card-terminal.is-route { font-family: inherit; }
 /* Not a reference but a timestamp, so it drops the monospace the IDs above it use
    rather than blending into them. */
 .order-card-time {
@@ -306,7 +311,7 @@ html, body {
    the tight tracking, not weight 700. */
 .order-card-amount {
   font-weight: 600;
-  font-size: 1.05rem;
+  font-size: .95rem;
   letter-spacing: -.01em;
   font-variant-numeric: tabular-nums;
   /* Yields to the badge instead of pushing it out of the card. */
