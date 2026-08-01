@@ -2307,6 +2307,23 @@ function showOverlay(amount, currency) {
   $overlay.classList.remove('hidden');
 }
 
+// Waiting on an answer for a payment that is already over. Tap to Pay comes back
+// this way: the browser reloads after the Payments app is done, so there is no
+// amount left to show and nothing to cancel. That makes showOverlay wrong here --
+// it is built around a payment still running on a terminal.
+function showOverlayWorking(message) {
+  clearTimeout(_overlayHideTimer);
+  $overlaySpinner.classList.remove('hidden');
+  $overlayTitle.textContent = 'Payment Result';
+  $overlayMsg.textContent = message;
+  $overlayAmount.textContent = '';
+  $overlayResult.classList.add('hidden');
+  $btnCheckStatus.classList.add('hidden');
+  $btnCancelPay.classList.add('hidden');
+  $btnCloseOverlay.classList.add('hidden');
+  $overlay.classList.remove('hidden');
+}
+
 function showOverlayResult(success, message) {
   clearTimeout(_overlayHideTimer);
   $overlaySpinner.classList.add('hidden');
@@ -2318,6 +2335,9 @@ function showOverlayResult(success, message) {
   $btnCheckStatus.classList.add('hidden');
   $btnCancelPay.classList.add('hidden');
   $btnCloseOverlay.classList.remove('hidden');
+  // Every other caller reaches here from showOverlay, which has already revealed
+  // the dialog. The Tap to Pay return has not, so this cannot assume it is visible.
+  $overlay.classList.remove('hidden');
 
   // A success has nothing left to read, so it clears itself and hands the till
   // back. A failure stays up until it is dismissed, because the reason on screen
@@ -2750,13 +2770,15 @@ function renderTtpStatus() {
     // Show the amount that will be charged (current cart total)
     const cur = state.config.currency || 'EUR';
     const total = cartTotal();
-    TTP.amount.classList.remove('hidden');
     if (total > 0) {
+      TTP.amount.classList.remove('hidden');
       TTP.amount.textContent = `Amount to charge: ${cur} ${total.toFixed(2)}`;
       TTP.btnPay.disabled = false;
       TTP.btnPay.textContent = 'Pay with Tap to Pay';
     } else {
-      TTP.amount.textContent = 'Cart is empty — add products before paying.';
+      // The disabled button underneath already reads "Pay (cart empty)". A sentence
+      // above it saying the same thing was the line carrying the duplication.
+      TTP.amount.classList.add('hidden');
       TTP.btnPay.disabled = true;
       TTP.btnPay.textContent = 'Pay (cart empty)';
     }
@@ -2801,7 +2823,7 @@ async function ttpStartPayment() {
   const installationId = localStorage.getItem('ttp_installationId') || '';
   if (!installationId) { ttpMessage('Board the device first', 'error'); return; }
   const total = cartTotal();
-  if (total <= 0) { ttpMessage('Cart is empty — add products before paying.', 'error'); return; }
+  if (total <= 0) { ttpMessage('Nothing to charge.', 'error'); return; }
   const items = state.cart.map(c => ({ id: c.product.id, name: c.product.name, price: c.product.price, qty: c.qty }));
   try {
     ttpMessage('Preparing Tap to Pay request...', 'info');
@@ -2964,7 +2986,6 @@ async function handleTtpReturn() {
   }
 
   if (step === 'pay') {
-    openTtpModal();
     // The Payments app short response returns two params: `response` and
     // `securityTrailer`, both Base64URL. Read them raw from the query string
     // (restoring any '+' that URL decoding turned into spaces) so they are not
@@ -2983,7 +3004,12 @@ async function handleTtpReturn() {
     });
     clean();
     if (encrypted) {
-      ttpMessage('Decrypting payment response...', 'info');
+      // A Tap to Pay payment ends in the same dialog every other payment ends in.
+      // It used to report into the middle of the boarding dialog, which is where
+      // the payment was started from but not where a result belongs -- and it left
+      // that dialog sitting open behind the answer.
+      closeTtpModal();
+      showOverlayWorking('Reading the payment result...');
       try {
         const res = await fetch('/api/taptopay/payment-result', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2992,25 +3018,25 @@ async function handleTtpReturn() {
         const data = await res.json();
         showApiResponse('Tap to Pay — payment result', data);
         if (!res.ok) {
-          ttpMessage(`Could not decrypt response: ${data.error || 'error'}`, 'error');
+          showOverlayResult(false, `Could not read the response: ${data.error || 'error'}`);
           return true;
         }
-        const pr = data.response?.SaleToPOIResponse?.PaymentResponse;
         if (data.result === 'Success') {
-          const amt = pr?.PaymentResult?.AmountsResp;
-          const psp = data.order?.pspReference;
-          ttpMessage(`✓ Payment SUCCESSFUL\n${psp ? 'PSP: ' + psp + '\n' : ''}${amt ? 'Authorized: ' + (amt.Currency || '') + ' ' + (amt.AuthorizedAmount ?? '') + '\n' : ''}\nSee API log for the full response.`, 'info');
-          showToast('Tap to Pay payment successful', 'success');
+          showOverlayResult(true, data.order
+            ? paymentOutcomeMessage(data.order)
+            : 'Payment successful');
         } else {
-          ttpMessage(`✗ Payment ${data.result || 'FAILED'}${data.errorCondition ? ' (' + data.errorCondition + ')' : ''}\n\nSee API log for details.`, 'error');
-          showToast(`Tap to Pay: ${data.result || 'failed'}`, 'warning');
+          showOverlayResult(false, `Payment ${data.result || 'failed'}${data.errorCondition ? ` (${data.errorCondition})` : ''}`);
         }
       } catch (err) {
-        ttpMessage(`Error reading response: ${err.message}`, 'error');
+        showOverlayResult(false, `Could not read the response: ${err.message}`);
       }
       return true;
     }
-    // No encrypted payload — show whatever came back
+    // Nothing decryptable came back, so there is no outcome to report -- only the
+    // raw return to look at. That is a diagnosis, not a payment result, so it stays
+    // in the Tap to Pay dialog rather than borrowing the payment one.
+    openTtpModal();
     showApiResponse('Tap to Pay — payment result', all);
     const detail = Object.keys(all).length ? JSON.stringify(all, null, 2) : '(no parameters returned)';
     ttpMessage(`Returned from Payments app:\n\n${detail}`, 'info', true);
