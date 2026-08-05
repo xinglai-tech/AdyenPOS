@@ -188,6 +188,7 @@ const $overlayResult   = document.getElementById('overlay-result');
 const $btnCheckStatus  = document.getElementById('btn-check-status');
 const $btnCancelPay    = document.getElementById('btn-cancel-payment');
 const $btnCloseOverlay = document.getElementById('btn-close-overlay');
+const $btnDetachOverlay = document.getElementById('btn-detach-overlay');
 
 // Refund modal
 const $refundModal     = document.getElementById('refund-modal');
@@ -356,12 +357,12 @@ document.addEventListener('click', () => {
 const EVENT_DISPLAY = {
   'TENDER_CREATED':       'Transaction started',
   'CARD_INSERTED':        'Card inserted',
-  'CARD_PRESENTED':       'Card presented (contactless)',
+  'CARD_PRESENTED':       'Card presented',
   'CARD_SWIPED':          'Card swiped',
   'WAIT_FOR_APP_SELECTION': 'Waiting for app selection...',
   'APPLICATION_SELECTED':  'App selected',
   'ASK_SIGNATURE':        'Signature required',
-  'CHECK_SIGNATURE':      'Please check signature',
+  'CHECK_SIGNATURE':      'Check signature',
   'SIGNATURE_CHECKED':    'Signature verified',
   'WAIT_FOR_PIN':         'Waiting for PIN...',
   'PIN_ENTERED':          'PIN entered',
@@ -369,13 +370,13 @@ const EVENT_DISPLAY = {
   'RECEIPT_PRINTED':      'Receipt printed',
   'CARD_REMOVED':         'Card removed',
   'TENDER_FINAL':         'Transaction complete',
-  'ASK_DCC':              'DCC offered to customer',
+  'ASK_DCC':              'DCC offered',
   'DCC_ACCEPTED':         'DCC accepted',
   'DCC_REJECTED':         'DCC rejected',
   'ASK_GRATUITY':         'Waiting for tip...',
   'GRATUITY_ENTERED':     'Tip entered',
   'BALANCE_QUERY_STARTED': 'Checking balance...',
-  'BALANCE_QUERY_COMPLETED': 'Balance check done',
+  'BALANCE_QUERY_COMPLETED': 'Balance checked',
   'PROVIDE_CARD_DETAILS': 'Waiting for card details...',
   'CARD_DETAILS_PROVIDED': 'Card details entered',
 };
@@ -383,7 +384,6 @@ const EVENT_DISPLAY = {
 const _termDisplayState = {}; // { poiId: { txnId, clearTimer } }
 
 function updateTerminalDisplay(data) {
-  if (!state.isAsync) return;
   const { events, poiId } = data;
   if (!events || events.length === 0) return;
 
@@ -427,6 +427,32 @@ function updateTerminalDisplay(data) {
   }
 
   renderTerminalDisplay();
+  reportDisplayOnOverlay(key, lines);
+}
+
+// Sync mode keeps the payment dialog up, and it covers the panel these lines
+// normally go to. The cashier is standing at the terminal waiting, so this is where
+// they are worth the most: 'Waiting for PIN...' answers the question being asked,
+// where the fixed 'Please complete the payment on the terminal...' does not.
+function reportDisplayOnOverlay(key, lines) {
+  if (state.isAsync) return;
+  // Cleared before the result is shown, so the events a terminal sends after its
+  // PaymentResponse -- receipt printed, card removed -- cannot overwrite the outcome.
+  if (!state.pendingServiceId) return;
+  if (_overlayDetached || $overlay.classList.contains('hidden')) return;
+  // A cancel has been asked for. What is happening to that request now matters more
+  // than which step the transaction had reached.
+  if (state._cancelling) return;
+
+  // The dialog speaks for one payment. Now that a till may hold any number of
+  // terminals, another one's events would otherwise narrate the wrong sale. A
+  // notification carrying no POIID is not attributable, so it is let through.
+  const order = state.orders.find(o => o.serviceId === state.pendingServiceId);
+  const paying = order?.terminalId || state.config.poiId || '';
+  if (key !== '_default' && paying && key !== paying) return;
+
+  const latest = lines[lines.length - 1];
+  if (latest) $overlayMsg.textContent = latest;
 }
 
 // The clear button lives in the panel's head, not in here, so this owns every child
@@ -2152,6 +2178,15 @@ async function checkTransactionStatus() {
 }
 
 // ====================== Cancel Payment ======================
+// How long the dialog waits for /api/cancel before offering a way out of it.
+//
+// An AbortRequest is answered by Adyen, and that answer has been seen to take tens
+// of seconds. Nothing is wrong when it does: the abort is best-effort, the server
+// repeats it while the order is pending, and only the PaymentResponse settles the
+// sale. So the wait buys the cashier nothing beyond this point, and the till is
+// more useful back in their hands than holding a spinner.
+const CANCEL_SLOW_MS = 10000;
+
 async function cancelPayment() {
   if (!state.pendingServiceId) {
     // If we have an abort controller, abort the fetch
@@ -2160,6 +2195,17 @@ async function cancelPayment() {
     }
     return;
   }
+
+  // Hands the message line over to the cancel for the rest of this payment, so the
+  // terminal's display notifications cannot narrate over it.
+  state._cancelling = true;
+
+  // Not cleared on the way out of this function: the fetch below is deliberately
+  // left running when the dialog is put away, and its own completion hides it.
+  const slowTimer = setTimeout(() => {
+    $overlayMsg.textContent = 'The terminal has not answered the cancel yet. It keeps being asked.';
+    $btnDetachOverlay.classList.remove('hidden');
+  }, CANCEL_SLOW_MS);
 
   try {
     $btnCancelPay.disabled = true;
@@ -2198,6 +2244,10 @@ async function cancelPayment() {
     showToast(`Cancel failed: ${err.message}`, 'error');
     $btnCancelPay.disabled = false;
     $btnCancelPay.textContent = 'Cancel Payment';
+  } finally {
+    // The answer is here, so there is nothing left to walk away from.
+    clearTimeout(slowTimer);
+    $btnDetachOverlay.classList.add('hidden');
   }
 }
 
@@ -2362,8 +2412,17 @@ async function executeRefund() {
 // Tracked so a new payment cannot be closed by the previous one's timer.
 let _overlayHideTimer = null;
 
+// Set once the cashier has put the dialog away while the payment it describes is
+// still running. The outcome still arrives -- the sync request and the SSE update
+// both report it -- but reopening the dialog for it would put a modal back on
+// screen minutes later, over whatever is being done by then. It becomes a toast
+// instead. Cleared by the next payment, which owns the dialog again.
+let _overlayDetached = false;
+
 function showOverlay(amount, currency) {
   clearTimeout(_overlayHideTimer);
+  _overlayDetached = false;
+  state._cancelling = false;
   const cur = currency || state.config.currency || 'EUR';
   $overlaySpinner.classList.remove('hidden');
   $overlayTitle.textContent = 'Processing Payment';
@@ -2376,6 +2435,7 @@ function showOverlay(amount, currency) {
   $btnCancelPay.classList.remove('hidden');
   $btnCancelPay.disabled = false;
   $btnCancelPay.textContent = 'Cancel Payment';
+  $btnDetachOverlay.classList.add('hidden');
   $btnCloseOverlay.classList.add('hidden');
   $overlay.classList.remove('hidden');
 }
@@ -2386,6 +2446,7 @@ function showOverlay(amount, currency) {
 // it is built around a payment still running on a terminal.
 function showOverlayWorking(message) {
   clearTimeout(_overlayHideTimer);
+  _overlayDetached = false;
   $overlaySpinner.classList.remove('hidden');
   $overlayTitle.textContent = 'Payment Result';
   $overlayMsg.textContent = message;
@@ -2393,12 +2454,19 @@ function showOverlayWorking(message) {
   $overlayResult.classList.add('hidden');
   $btnCheckStatus.classList.add('hidden');
   $btnCancelPay.classList.add('hidden');
+  $btnDetachOverlay.classList.add('hidden');
   $btnCloseOverlay.classList.add('hidden');
   $overlay.classList.remove('hidden');
 }
 
 function showOverlayResult(success, message) {
   clearTimeout(_overlayHideTimer);
+  // Put away while this was still running, so it is reported without being pushed
+  // back in front of whatever replaced it.
+  if (_overlayDetached) {
+    showToast(message, success ? 'success' : 'warning');
+    return;
+  }
   $overlaySpinner.classList.add('hidden');
   $overlayTitle.textContent = success ? 'Payment Complete' : 'Payment Not Completed';
   $overlayMsg.textContent = '';
@@ -2407,6 +2475,7 @@ function showOverlayResult(success, message) {
   $overlayResult.classList.remove('hidden');
   $btnCheckStatus.classList.add('hidden');
   $btnCancelPay.classList.add('hidden');
+  $btnDetachOverlay.classList.add('hidden');
   $btnCloseOverlay.classList.remove('hidden');
   // Every other caller reaches here from showOverlay, which has already revealed
   // the dialog. The Tap to Pay return has not, so this cannot assume it is visible.
@@ -2421,6 +2490,16 @@ function showOverlayResult(success, message) {
 function hideOverlay() {
   clearTimeout(_overlayHideTimer);
   $overlay.classList.add('hidden');
+}
+
+// Puts the dialog away while the payment behind it is still live. The cancel
+// request is deliberately left in flight: the server needs its answer to keep
+// repeating the abort, and the order list updates over SSE either way. The result
+// arrives as a toast once it lands.
+function detachOverlay() {
+  _overlayDetached = true;
+  hideOverlay();
+  showToast('Still cancelling in the background — the order list will show the result', 'info');
 }
 
 // ====================== API Response Display ======================
@@ -2729,6 +2808,7 @@ function bindEvents() {
   // Overlay
   $btnCheckStatus.addEventListener('click', checkTransactionStatus);
   $btnCancelPay.addEventListener('click', cancelPayment);
+  $btnDetachOverlay.addEventListener('click', detachOverlay);
   $btnCloseOverlay.addEventListener('click', hideOverlay);
 
   // Refund modal

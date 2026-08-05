@@ -131,6 +131,9 @@
       <div class="overlay-actions">
         <button id="btn-check-status" class="btn btn-outline">Check Status</button>
         <button id="btn-cancel-payment" class="btn btn-danger">Cancel Payment</button>
+        <!-- Shown only once a cancel has gone unanswered long enough to be worth
+             walking away from. See CANCEL_SLOW_MS in app.js. -->
+        <button id="btn-detach-overlay" class="btn btn-outline hidden">Continue in background</button>
         <button id="btn-close-overlay" class="btn btn-outline hidden">Close</button>
       </div>
     </div>

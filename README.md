@@ -49,6 +49,11 @@ model; before that nothing is assumed.
   arrives later by webhook. A **Transaction Status** box appears in the panel and
   fills with the terminal's display notifications as the cardholder proceeds.
 
+Both modes receive those display notifications; they differ only in where there is
+room to show them. In async the box above fills up. In sync the payment dialog is
+covering it, so the latest step is written into the dialog itself — 'Waiting for
+PIN...' in place of the standing 'complete the payment on the terminal' line.
+
 Both modes update the order list live over SSE, so a result never depends on the
 page being refreshed.
 
