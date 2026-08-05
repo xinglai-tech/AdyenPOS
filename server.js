@@ -400,7 +400,15 @@ async function adyenRequest(endpoint, body, opts = {}) {
     // so plainly: callers must not record it as a decline. `code` travels out to the
     // client, which holds this message on screen longer than an ordinary error.
     if (err.name === 'TimeoutError' || err.name === 'AbortError') {
-      const timeoutError = new Error(`The terminal did not respond within ${Math.round(timeoutMs / 1000)}s, please retry when the terminal is online.`);
+      const secs = Math.round(timeoutMs / 1000);
+      // Only a call that is actually routed to a device may be reported as the
+      // device not answering. Lookups Adyen answers from its own records are not,
+      // and blaming a terminal for one of those sent people to check hardware that
+      // was never asked anything -- while telling them to wait for it to come back
+      // online, which no amount of waiting would change.
+      const timeoutError = new Error(opts.touchesDevice === false
+        ? `Adyen did not answer the ${opts.label || 'lookup'} request within ${secs}s. Nothing was asked of a terminal, so this does not mean one is offline.`
+        : `The terminal did not respond within ${secs}s, please retry when the terminal is online.`);
       timeoutError.code = 'ADYEN_TIMEOUT';
       throw timeoutError;
     }
@@ -430,7 +438,7 @@ async function fetchConnectedTerminals({ force = false, silent = false } = {}) {
   const data = await adyenRequest(
     'https://terminal-api-test.adyen.com/connectedTerminals',
     { merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT || '' },
-    { timeoutMs: ADYEN_LOOKUP_TIMEOUT_MS, silent, label: 'Connected terminals' }
+    { timeoutMs: ADYEN_LOOKUP_TIMEOUT_MS, silent, label: 'Connected terminals', touchesDevice: false }
   );
   _connectedCache = { data, at: Date.now() };
   return data;

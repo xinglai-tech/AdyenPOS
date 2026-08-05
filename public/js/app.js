@@ -1788,7 +1788,23 @@ async function checkTerminal(opts) {
     });
     const data = await res.json();
     if (!silent) showApiResponse('Connected terminals', data);
-    const onlineList = data.uniqueTerminalIds || [];
+
+    // A lookup that fails comes back as a 500 with an error body rather than a
+    // thrown fetch, so it used to fall straight through here: uniqueTerminalIds was
+    // undefined, the online set became empty, and every terminal was drawn Offline
+    // -- over a call that is answered by Adyen from its own records and never
+    // reaches a device at all. After a silent re-check it did that without a word.
+    //
+    // Nothing is known now, so the last known answer stands. This is the policy the
+    // server already applies in terminalUnreachableReason: an inconclusive check
+    // must not be allowed to block a terminal that is working.
+    if (!res.ok || !Array.isArray(data.uniqueTerminalIds)) {
+      console.warn('Terminal check gave no answer, keeping the last known state:', data.error || res.status);
+      if (!silent) showToast(`Terminal check failed: ${data.error || 'no answer from Adyen'}`, 'error');
+      return;
+    }
+
+    const onlineList = data.uniqueTerminalIds;
     state._terminalOnlineSet = new Set(onlineList);
     state._terminalChecked = true;
 
@@ -1803,8 +1819,9 @@ async function checkTerminal(opts) {
       tryRecoverPending();
     }
   } catch (err) {
-    state.terminalOnline = false;
-    state._terminalOnlineSet = new Set();
+    // Same reasoning as above: the check not completing is not evidence that the
+    // terminals are gone, and treating it as such disabled the till.
+    console.warn('Terminal check failed, keeping the last known state:', err.message);
     if (!silent) showToast(`Terminal check failed: ${err.message}`, 'error');
   }
   renderTerminals();
