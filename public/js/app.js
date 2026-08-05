@@ -1889,6 +1889,9 @@ async function recoverPendingOrders() {
           // Sync mode: restore overlay so user can monitor or cancel
           showOverlay(order.amount, state.config.currency || 'EUR');
           state.pendingServiceId = order.serviceId;
+          // Sent long before this dialog was rebuilt, so the wait a fresh sale opens
+          // with has already been served.
+          armCancelAfterDispatch(new Date(order.createdAt).getTime());
           $overlayMsg.textContent = `Recovering order ${order.serviceId}...`;
         }
         showToast(`Order ${order.serviceId} still in progress on terminal`, 'warning');
@@ -2119,7 +2122,7 @@ async function cancelOrder(serviceId, btnEl) {
       body: JSON.stringify({ serviceId })
     });
     const data = await res.json();
-    showApiResponse(cancelTitle(data.adyenResponse), data);
+    showApiResponse(cancelTitle(data.adyenResponse), data.adyenResponse || data);
     if (!res.ok) {
       showRequestError(data, 'Cancel failed');
       return;
@@ -2213,6 +2216,42 @@ async function checkTransactionStatus() {
 // would offer the retry long after it could have helped.
 const CANCEL_REARM_MS = 3000;
 
+// And before either of them, the wait for the button to exist at all. An abort that
+// reaches the terminal before the payment it names is discarded, and the terminal
+// then goes on to take the card -- with the cashier already told the sale was
+// cancelled. The server used to absorb a press like that by sitting on it for the
+// first 1500ms, which looks exactly like a terminal ignoring the cancel. Declining
+// to offer the button until the payment has had time to land says the same thing
+// without pretending to have done something.
+const CANCEL_ARM_MS = 2000;
+
+// Outlives the call that set it, so a payment settling inside the window would
+// otherwise arm the button of whatever came next.
+let _cancelArmTimer = null;
+
+// Measured from the dispatch rather than from the dialog, which is not the same
+// moment: the dialog is also rebuilt around a payment recovered from the order
+// list, whose window went by long ago.
+//
+// Held disabled rather than hidden, because a control that appears mid-sale moves
+// the two beside it, and the cashier reaching for one would find another under the
+// finger.
+function armCancelAfterDispatch(dispatchedAt = Date.now()) {
+  clearTimeout(_cancelArmTimer);
+  const remaining = CANCEL_ARM_MS - (Date.now() - dispatchedAt);
+  if (remaining <= 0) {
+    rearmCancel('Cancel Payment');
+    return;
+  }
+  $btnCancelPay.disabled = true;
+  $btnCancelPay.textContent = 'Cancel Payment';
+  _cancelArmTimer = setTimeout(() => {
+    // Only while the dialog is still waiting on a payment. One that ended inside the
+    // window has its result on screen, with this button hidden behind it.
+    if (state.pendingServiceId) rearmCancel('Cancel Payment');
+  }, remaining);
+}
+
 // Then the way out. Kept further back than the button because it puts the dialog
 // away, which is not something to invite by accident while an answer may still be
 // moments off.
@@ -2288,11 +2327,7 @@ async function cancelPayment() {
       body: JSON.stringify({ serviceId: state.pendingServiceId })
     });
     const cancelData = await cancelRes.json();
-    // The whole body, not just Adyen's half of it. Adyen answers an abort with the
-    // single word 'ok', so the entry was one line; the endpoint's own timings sit
-    // alongside it and are the only way to tell an answer that took twenty seconds
-    // from an abort this server held back for most of them.
-    showApiResponse(cancelTitle(cancelData.adyenResponse), cancelData);
+    showApiResponse(cancelTitle(cancelData.adyenResponse), cancelData.adyenResponse || cancelData);
 
     if (!cancelRes.ok) {
       showToast(cancelData.error || 'Cancel failed', 'error');
@@ -2547,8 +2582,7 @@ function showOverlay(amount, currency) {
   $btnCheckStatus.disabled = false;
   $btnCheckStatus.textContent = 'Check Status';
   $btnCancelPay.classList.remove('hidden');
-  $btnCancelPay.disabled = false;
-  $btnCancelPay.textContent = 'Cancel Payment';
+  armCancelAfterDispatch();
   $btnDetachOverlay.classList.add('hidden');
   $btnCloseOverlay.classList.add('hidden');
   $overlay.classList.remove('hidden');
@@ -2576,6 +2610,9 @@ function showOverlayWorking(message) {
 
 function showOverlayResult(success, message) {
   clearTimeout(_overlayHideTimer);
+  // The sale is over, so nothing is waiting to be cancelled. Left running, this
+  // would enable a hidden button and hand it to the next payment already armed.
+  clearTimeout(_cancelArmTimer);
   // Put away while this was still running, so it is reported without being pushed
   // back in front of whatever replaced it.
   if (_overlayDetached) {
