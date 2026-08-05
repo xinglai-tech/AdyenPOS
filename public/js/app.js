@@ -2119,7 +2119,7 @@ async function cancelOrder(serviceId, btnEl) {
       body: JSON.stringify({ serviceId })
     });
     const data = await res.json();
-    showApiResponse(cancelTitle(data.adyenResponse), data.adyenResponse || data);
+    showApiResponse(cancelTitle(data.adyenResponse), data);
     if (!res.ok) {
       showRequestError(data, 'Cancel failed');
       return;
@@ -2288,7 +2288,11 @@ async function cancelPayment() {
       body: JSON.stringify({ serviceId: state.pendingServiceId })
     });
     const cancelData = await cancelRes.json();
-    showApiResponse(cancelTitle(cancelData.adyenResponse), cancelData.adyenResponse || cancelData);
+    // The whole body, not just Adyen's half of it. Adyen answers an abort with the
+    // single word 'ok', so the entry was one line; the endpoint's own timings sit
+    // alongside it and are the only way to tell an answer that took twenty seconds
+    // from an abort this server held back for most of them.
+    showApiResponse(cancelTitle(cancelData.adyenResponse), cancelData);
 
     if (!cancelRes.ok) {
       showToast(cancelData.error || 'Cancel failed', 'error');

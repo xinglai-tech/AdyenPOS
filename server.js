@@ -1806,7 +1806,20 @@ app.post('/api/cancel', async (req, res) => {
   const { serviceId } = req.body;
   if (!serviceId) return res.status(400).json({ error: 'A serviceId is required' });
 
+  // A cancel that takes twenty seconds to answer is indistinguishable, from the
+  // outside, between a terminal that took its time and this endpoint holding the
+  // abort back before ever sending it -- and it has two places where it does hold
+  // one back. The split is measured rather than reasoned about, because the API log
+  // timestamps both halves of a call when the browser renders them, over two
+  // different connections, and so cannot settle it.
+  const receivedAt = Date.now();
+  let dispatchWaitMs = 0;
+
   let order = orders.find(o => o.serviceId === serviceId);
+  // Whether the order was in this process's memory at all. False on a cancel that
+  // reached a different instance from the payment, or one that outlived a restart,
+  // in which case the wait below can only ever run to its deadline.
+  const orderKnown = !!order;
   let plan = planCancel(order);
   if (!plan.ok) return res.status(409).json({ error: plan.reason, status: plan.status });
 
@@ -1814,6 +1827,7 @@ app.post('/api/cancel', async (req, res) => {
   // terminal for this abort to match.
   if (plan.waitForDispatch) {
     order = await awaitDispatch(serviceId);
+    dispatchWaitMs = Date.now() - receivedAt;
     plan = planCancel(order);
     if (!plan.ok) return res.status(409).json({ error: plan.reason, status: plan.status });
     // Still nothing after the wait: the payment was most likely never sent at all.
@@ -1825,12 +1839,26 @@ app.post('/api/cancel', async (req, res) => {
   // Holds the abort behind the payment when the two were sent within moments of
   // each other. Without it the terminal receives an abort for a ServiceID it has
   // not seen yet, drops it, and carries on taking the payment.
+  const heldBackMs = plan.delayMs > 0 ? plan.delayMs : 0;
   if (plan.delayMs > 0) await sleep(plan.delayMs);
 
   const poiId = (order && order.terminalId) || getActivePoiId();
 
+  const sentAt = Date.now();
   try {
     const data = await abortPayment(serviceId, poiId);
+
+    // Everything this endpoint spent before the abort left, against what Adyen took
+    // to answer it. Returned as well as logged: the API log is where this question
+    // gets asked, and the server console is not always to hand.
+    const timings = {
+      orderKnown,
+      dispatchWaitMs,
+      heldBackMs,
+      adyenMs: Date.now() - sentAt,
+      totalMs: Date.now() - receivedAt
+    };
+    console.log(`[Cancel] ${serviceId}`, timings);
 
     // The terminal can refuse the abort outright. Checked defensively because a
     // bare acknowledgement carrying no Response at all is also a normal answer.
@@ -1852,7 +1880,7 @@ app.post('/api/cancel', async (req, res) => {
     // cover -- by then the sale had usually ended, and the terminal answered the
     // repeat with a Reject naming a ServiceID it no longer knew. The client re-arms
     // its cancel button instead, which puts the retry where the information is.
-    res.json({ ok: true, accepted, adyenResponse: data });
+    res.json({ ok: true, accepted, timings, adyenResponse: data });
   } catch (err) {
     res.status(500).json({ error: err.message, code: err.code });
   }
