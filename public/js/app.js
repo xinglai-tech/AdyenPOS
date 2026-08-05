@@ -2002,6 +2002,10 @@ async function payAsync(body) {
 
 // ====================== Query Order Status (from order list) ======================
 async function queryOrderStatus(serviceId, btnEl) {
+  // The label carries an icon, so it is put back as markup. Assigning textContent
+  // to restore it would drop the icon for good: these buttons are rendered from
+  // `data-lucide` placeholders that only become an svg once per render.
+  const original = btnEl.innerHTML;
   try {
     btnEl.disabled = true;
     btnEl.textContent = 'Checking...';
@@ -2028,17 +2032,20 @@ async function queryOrderStatus(serviceId, btnEl) {
     const statusResp = data?.SaleToPOIResponse?.TransactionStatusResponse;
     const result = statusResp?.Response?.Result;
 
+    // Every branch has to say something. In async mode there is no overlay, so this
+    // toast is the only place an answer appears -- and the log entry it would
+    // otherwise hide in arrives collapsed.
     if (result === 'Success') {
       const paymentResp = statusResp?.RepeatedMessageResponse?.RepeatedResponseMessageBody?.PaymentResponse;
-      if (paymentResp) {
-        const payResult = paymentResp.Response?.Result;
-        if (payResult === 'Success') {
-          showToast('Payment successful!', 'success');
-        } else {
-          const errCond = paymentResp.Response?.ErrorCondition;
-          const msg = (errCond === 'Aborted' || errCond === 'Cancel') ? 'Payment cancelled' : 'Payment failed';
-          showToast(msg, 'warning');
-        }
+      const payResult = paymentResp?.Response?.Result;
+      if (payResult === 'Success') {
+        showToast('Payment successful!', 'success');
+      } else if (payResult) {
+        const errCond = paymentResp.Response?.ErrorCondition;
+        const msg = (errCond === 'Aborted' || errCond === 'Cancel') ? 'Payment cancelled' : 'Payment failed';
+        showToast(msg, 'warning');
+      } else {
+        showToast('The terminal knows this order but reported no payment — see the API log', 'warning');
       }
     } else if (result === 'Failure') {
       const errCond = statusResp?.Response?.ErrorCondition;
@@ -2047,17 +2054,20 @@ async function queryOrderStatus(serviceId, btnEl) {
       } else {
         showToast(`Status: ${errCond || 'Unknown'}`, 'warning');
       }
+    } else {
+      showToast('No transaction status came back — see the API log', 'warning');
     }
   } catch (err) {
     showToast(`Status check failed: ${err.message}`, 'error');
   } finally {
     btnEl.disabled = false;
-    btnEl.textContent = 'Check Status';
+    btnEl.innerHTML = original;
   }
 }
 
 // ====================== Cancel Order ======================
 async function cancelOrder(serviceId, btnEl) {
+  const original = btnEl.innerHTML;
   try {
     btnEl.disabled = true;
     btnEl.textContent = 'Cancelling...';
@@ -2084,7 +2094,7 @@ async function cancelOrder(serviceId, btnEl) {
     showToast(`Cancel failed: ${err.message}`, 'error');
   } finally {
     btnEl.disabled = false;
-    btnEl.textContent = 'Cancel';
+    btnEl.innerHTML = original;
   }
 }
 

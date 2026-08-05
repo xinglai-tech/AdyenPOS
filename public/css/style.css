@@ -404,7 +404,13 @@ html, body {
 }
 .btn-check-order, .btn-cancel-order {
   flex: 1;
-  padding: 6px 0;
+  /* A flex item defaults to min-width:auto, so neither button can shrink below the
+     width of its icon plus its label. On a narrow order card the pair then overruns
+     the row and the second one is pushed outside the card. */
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 6px 4px;
   font-family: inherit;
   font-size: .68rem;
   font-weight: 400;
