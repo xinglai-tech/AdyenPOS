@@ -3077,13 +3077,22 @@ async function handleTtpReturn() {
     });
     clean();
     if (!encrypted) {
-      // Nothing decryptable came back, so there is no outcome to report. The order
-      // keeps its parked refund and stays refundable, which is the safe way round:
-      // a reversal that did go through can be seen in the next result.
-      openTtpModal();
-      const detail = Object.keys(all).length ? JSON.stringify(all, null, 2) : '(no parameters returned)';
-      ttpMessage(`Returned from Payments app:\n\n${detail}`, 'info', true);
-      showToast('Tap to Pay returned — see the dialog', 'info');
+      // The Payments app refused the request and sent back a reason instead of a
+      // result. The server is still told, so it can release the refund parked on
+      // the order — otherwise that order would swallow the next refund's result.
+      const appError = params.get('error') || '';
+      closeTtpModal();
+      showOverlayWorking('Reading the refund result...');
+      try {
+        const res = await fetch('/api/taptopay/refund-result', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ error: appError || 'The Payments app returned no result' })
+        });
+        showApiResponse('Tap to Pay — refund result', await res.json());
+      } catch { /* reporting the refusal matters more than logging it */ }
+      showOverlayResult(false, appError
+        ? `Refund refused: ${appError}`
+        : 'The Payments app returned no refund result');
       return true;
     }
     closeTtpModal();

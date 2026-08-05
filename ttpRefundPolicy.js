@@ -42,4 +42,32 @@ function ttpRefundBlock(order, installationId, amount) {
   return null;
 }
 
-module.exports = { REFUNDABLE_STATUSES, ttpRefundBlock };
+// The ReversalRequest body for a referenced refund, shared by the cloud route and
+// the Tap to Pay one so the two cannot drift apart.
+//
+// A partial refund is a different request from a full one, and not only by the
+// amount: Adyen requires SaleData.SaleTransactionID for it, as the merchant
+// reference for the refund itself. A full reversal needs no reference of its own
+// because the payment it reverses already identifies it. Sending a partial one
+// without it is rejected before anything is refunded.
+function buildReversalRequest(order, amount, refundReference, timestamp) {
+  const reversal = {
+    OriginalPOITransaction: {
+      POITransactionID: {
+        TransactionID: order.poiTransactionId,
+        TimeStamp: order.poiTimestamp
+      }
+    },
+    ReversalReason: 'MerchantCancel'
+  };
+
+  if (amount != null && amount < order.amount) {
+    reversal.ReversedAmount = amount;
+    reversal.SaleData = {
+      SaleTransactionID: { TransactionID: refundReference, TimeStamp: timestamp }
+    };
+  }
+  return reversal;
+}
+
+module.exports = { REFUNDABLE_STATUSES, ttpRefundBlock, buildReversalRequest };

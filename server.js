@@ -13,7 +13,7 @@ const {
   planCancel, shouldRetryAbort,
   DEFAULT_ABORT_RETRY_MS, DEFAULT_ABORT_ATTEMPTS, DEFAULT_DISPATCH_WAIT_MS
 } = require('./cancelPolicy');
-const { REFUNDABLE_STATUSES, ttpRefundBlock } = require('./ttpRefundPolicy');
+const { REFUNDABLE_STATUSES, ttpRefundBlock, buildReversalRequest } = require('./ttpRefundPolicy');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -1894,23 +1894,17 @@ app.post('/api/refund', async (req, res) => {
   if (amount > remaining) {
     return res.status(400).json({ error: `Amount exceeds remaining refundable: ${remaining.toFixed(2)}` });
   }
+  // An absent amount means a full reversal, but a zero or negative one is a bad
+  // request. Left through, it reads the same as absent further down and reverses
+  // the whole payment — the opposite of what a zero refund asks for.
+  if (amount != null && !(amount > 0)) {
+    return res.status(400).json({ error: 'Refund amount must be greater than 0' });
+  }
 
   const unreachable = await terminalUnreachableReason(order.terminalId || getActivePoiId());
   if (unreachable) return res.status(409).json(unreachable);
 
-  const reversalRequest = {
-    OriginalPOITransaction: {
-      POITransactionID: {
-        TransactionID: order.poiTransactionId,
-        TimeStamp: order.poiTimestamp
-      }
-    },
-    ReversalReason: 'MerchantCancel'
-  };
-
-  if (amount && amount < order.amount) {
-    reversalRequest.ReversedAmount = amount;
-  }
+  const reversalRequest = buildReversalRequest(order, amount, uuidv4(), new Date().toISOString());
 
   const refundHeader = makeHeader('Reversal');
 
@@ -2136,18 +2130,7 @@ app.post('/api/taptopay/refund-request', (req, res) => {
     POIID: installationId
   };
 
-  const reversalRequest = {
-    OriginalPOITransaction: {
-      POITransactionID: {
-        TransactionID: order.poiTransactionId,
-        TimeStamp: order.poiTimestamp
-      }
-    },
-    ReversalReason: 'MerchantCancel'
-  };
-  // Omitted for a full reversal: sending the whole amount as a partial one is a
-  // different request as far as the terminal is concerned.
-  if (amount < order.amount) reversalRequest.ReversedAmount = amount;
+  const reversalRequest = buildReversalRequest(order, amount, uuidv4(), new Date().toISOString());
 
   try {
     const terminalApiRequest = {
@@ -2193,8 +2176,25 @@ function ttpParseShort(plaintext) {
 
 // --------------- API: Tap to Pay — decrypt the nexo reversal response ---------------
 app.post('/api/taptopay/refund-result', (req, res) => {
-  const { response, securityTrailer } = req.body;
-  if (!response) return res.status(400).json({ error: 'response is required' });
+  const { response, securityTrailer, error } = req.body;
+
+  // The Payments app can refuse the request outright, returning an `error` in the
+  // App Link and no ciphertext at all. Nothing was refunded, but the refund parked
+  // on the order has to be released — left behind, it would capture the result of
+  // the next Tap to Pay refund, which is matched by exactly that field. The status
+  // is deliberately untouched, so the order stays refundable and the attempt can be
+  // repeated once the cause is dealt with.
+  if (!response) {
+    if (!error) return res.status(400).json({ error: 'response is required' });
+    const abandoned = orders.find(o => o.viaTapToPay && o.refundPending);
+    if (abandoned) {
+      abandoned.refundError = error;
+      delete abandoned.refundPending;
+      orderChanged(abandoned);
+    }
+    console.log('[TTP refund-result] refused by the Payments app:', error);
+    return res.json({ result: 'Failure', errorCondition: error, order: abandoned || null });
+  }
 
   const securityKey = getNexoSecurityKey();
   if (!securityKey.Passphrase || !securityKey.KeyIdentifier) {
