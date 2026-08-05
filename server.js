@@ -13,6 +13,7 @@ const {
   planCancel, shouldRetryAbort,
   DEFAULT_ABORT_RETRY_MS, DEFAULT_ABORT_ATTEMPTS, DEFAULT_DISPATCH_WAIT_MS
 } = require('./cancelPolicy');
+const { REFUNDABLE_STATUSES, ttpRefundBlock } = require('./ttpRefundPolicy');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -1879,11 +1880,6 @@ app.post('/api/cancel', async (req, res) => {
 });
 
 // --------------- API: Referenced Refund ---------------
-// `refund_failed` is included because a failed refund leaves the payment itself
-// untouched, so the attempt must be repeatable — most often the terminal was
-// simply unreachable the first time.
-const REFUNDABLE_STATUSES = new Set(['paid', 'partially_refunded', 'refund_failed']);
-
 app.post('/api/refund', async (req, res) => {
   const { orderId, amount } = req.body;
   const order = orders.find(o => o.id === orderId);
@@ -2110,6 +2106,150 @@ app.post('/api/taptopay/payment-request', async (req, res) => {
     res.json({ request, serviceId, transactionId });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// --------------- API: Tap to Pay — build encrypted nexo referenced refund ---------------
+// The Payments app takes a referenced refund as a ReversalRequest over the same
+// App Link a payment uses, with POIID set to the boarded installationId. There is
+// no cloud path to the app, so /api/refund cannot serve these orders.
+app.post('/api/taptopay/refund-request', (req, res) => {
+  const { orderId, amount, installationId } = req.body;
+  const order = orders.find(o => o.id === orderId);
+
+  const blocked = ttpRefundBlock(order, installationId, amount);
+  if (blocked) return res.status(blocked.status).json({ error: blocked.error });
+
+  const securityKey = getNexoSecurityKey();
+  if (!securityKey.Passphrase || !securityKey.KeyIdentifier) {
+    return res.status(500).json({ error: 'Nexo shared key is not configured on the server' });
+  }
+
+  const serviceId = uuidv4().replace(/-/g, '').slice(0, 10);
+  const messageHeader = {
+    ProtocolVersion: '3.0',
+    MessageClass: 'Service',
+    MessageCategory: 'Reversal',
+    MessageType: 'Request',
+    ServiceID: serviceId,
+    SaleID: process.env.ADYEN_SALE_ID || 'POSWebApp',
+    POIID: installationId
+  };
+
+  const reversalRequest = {
+    OriginalPOITransaction: {
+      POITransactionID: {
+        TransactionID: order.poiTransactionId,
+        TimeStamp: order.poiTimestamp
+      }
+    },
+    ReversalReason: 'MerchantCancel'
+  };
+  // Omitted for a full reversal: sending the whole amount as a partial one is a
+  // different request as far as the terminal is concerned.
+  if (amount < order.amount) reversalRequest.ReversedAmount = amount;
+
+  try {
+    const terminalApiRequest = {
+      SaleToPOIRequest: { MessageHeader: messageHeader, ReversalRequest: reversalRequest }
+    };
+    const secured = nexoCrypto.encrypt(messageHeader, JSON.stringify(terminalApiRequest), securityKey);
+    const request = Buffer.from(JSON.stringify({ SaleToPOIRequest: secured }), 'utf-8').toString('base64url');
+
+    // Handing over to the App Link navigates the page away, so what this refund
+    // was for cannot be held in the browser. It is parked on the order and read
+    // back when the Payments app returns.
+    order.refundPending = { serviceId, amount, startedAt: new Date().toISOString() };
+    orderChanged(order);
+
+    res.json({ request, serviceId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// The short App Link response carries the ciphertext and its trailer in two
+// separate Base64URL parameters rather than one envelope.
+function ttpDecryptShort(response, securityTrailer, securityKey) {
+  const nexoBlob = Buffer.from(String(response), 'base64url').toString('utf-8');
+  const stObj = JSON.parse(Buffer.from(String(securityTrailer), 'base64url').toString('utf-8'));
+  return nexoCrypto.decrypt({
+    NexoBlob: nexoBlob,
+    SecurityTrailer: { Nonce: stObj.nonce || stObj.Nonce, Hmac: stObj.hmac || stObj.Hmac }
+  }, securityKey);
+}
+
+// The plaintext is a JSON object, but the docs show a form-encoded example, so
+// both are accepted.
+function ttpParseShort(plaintext) {
+  try {
+    const obj = JSON.parse(plaintext);
+    return { result: obj.result, url: obj.url, errorCondition: obj.errorCondition };
+  } catch {
+    const sp = new URLSearchParams(plaintext);
+    return { result: sp.get('result'), url: sp.get('url'), errorCondition: sp.get('errorCondition') };
+  }
+}
+
+// --------------- API: Tap to Pay — decrypt the nexo reversal response ---------------
+app.post('/api/taptopay/refund-result', (req, res) => {
+  const { response, securityTrailer } = req.body;
+  if (!response) return res.status(400).json({ error: 'response is required' });
+
+  const securityKey = getNexoSecurityKey();
+  if (!securityKey.Passphrase || !securityKey.KeyIdentifier) {
+    return res.status(500).json({ error: 'Nexo shared key is not configured on the server' });
+  }
+
+  const debug = { responseLength: String(response).length, mode: securityTrailer ? 'short' : 'full' };
+  console.log('[TTP refund-result] incoming:', JSON.stringify(debug));
+
+  try {
+    let result, errorCondition, serviceId = null, full = null;
+
+    if (securityTrailer) {
+      const plaintext = ttpDecryptShort(response, securityTrailer, securityKey);
+      debug.shortPlaintext = plaintext;
+      console.log('[TTP refund-result] short plaintext:', plaintext);
+      ({ result, errorCondition } = ttpParseShort(plaintext));
+    } else {
+      const normalized = String(response).replace(/ /g, '+').replace(/-/g, '+').replace(/_/g, '/');
+      const decoded = JSON.parse(Buffer.from(normalized, 'base64').toString('utf-8'));
+      const secured = decoded.SaleToPOIResponse || decoded.SaleToPOIRequest;
+      if (!secured || !secured.NexoBlob) {
+        return res.status(400).json({ error: 'Unexpected response envelope', decoded, debug });
+      }
+      full = JSON.parse(nexoCrypto.decrypt(secured, securityKey));
+      const reversalResponse = full?.SaleToPOIResponse?.ReversalResponse;
+      serviceId = full?.SaleToPOIResponse?.MessageHeader?.ServiceID || null;
+      result = reversalResponse?.Response?.Result;
+      errorCondition = reversalResponse?.Response?.ErrorCondition;
+    }
+
+    // The short response carries no ServiceID, so the order is found by the
+    // refund parked on it when the request was built.
+    const order = (serviceId && orders.find(o => o.refundPending?.serviceId === serviceId))
+      || orders.find(o => o.viaTapToPay && o.refundPending);
+
+    if (!order) {
+      return res.json({ result: result || null, errorCondition: errorCondition || null, response: full, debug, order: null });
+    }
+
+    const pending = order.refundPending;
+    if (result === 'Success') {
+      order.refundedAmount = (order.refundedAmount || 0) + pending.amount;
+      order.status = order.refundedAmount >= order.amount ? 'refunded' : 'partially_refunded';
+    } else {
+      order.status = 'refund_failed';
+    }
+    order.refundResponse = full || { short: debug.shortPlaintext };
+    delete order.refundPending;
+    orderChanged(order);
+
+    res.json({ result: result || null, errorCondition: errorCondition || null, response: full, debug, order });
+  } catch (err) {
+    console.error('[TTP refund-result] error:', err.message);
+    res.status(500).json({ error: `Decryption/parse failed: ${err.message}`, debug });
   }
 });
 

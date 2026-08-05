@@ -563,6 +563,11 @@ const PAID_STATUSES = new Set(['paid', 'partially_refunded', 'refunded', 'refund
 // per order and not per till: an order from another terminal is unusable even while
 // the selected one is perfectly healthy.
 function orderActionBlock(order) {
+  // A Tap to Pay order is not bound to a terminal in the list at all — its
+  // terminalId is a Payments app installation — so the list has nothing to say
+  // about it and the device answers instead.
+  if (order.viaTapToPay) return ttpActionBlock(order);
+
   const poiId = order.terminalId;
   if (!poiId) return state.terminalOnline ? null : 'The current terminal is offline';
 
@@ -576,6 +581,22 @@ function orderActionBlock(order) {
   }
   if (poiId !== state.config.poiId) {
     return `This order was taken on ${name}. Switch the current terminal to it first.`;
+  }
+  return null;
+}
+
+// Which of the three things a Tap to Pay action needs is missing, or null when
+// none is. The Payments app carries the reversal out on the device itself and
+// there is no cloud path to reach it, so the only device that can refund a Tap to
+// Pay payment is the boarded device that took it.
+function ttpActionBlock(order) {
+  if (!isAndroidDevice()) {
+    return 'Tap to Pay orders can only be refunded from the Android device that took the payment.';
+  }
+  const installationId = localStorage.getItem('ttp_installationId') || '';
+  if (!installationId) return 'This device is not boarded for Tap to Pay. Board it first.';
+  if (installationId !== order.terminalId) {
+    return 'This payment was taken on a different Tap to Pay device. Refund it from that one.';
   }
   return null;
 }
@@ -624,9 +645,11 @@ function renderOrders() {
   $orderList.innerHTML = filtered.map(o => {
     // Date as well as time: the list keeps up to 200 orders, so it spans days.
     const time = new Date(o.createdAt).toLocaleString();
-    // Cloud Terminal API actions (status/cancel/reversal-refund) do not work for
-    // Tap to Pay Payments app orders, which are not connected over the cloud.
-    const canRefund = (o.status === 'paid' || o.status === 'partially_refunded' || o.status === 'refund_failed') && o.poiTransactionId && !o.viaTapToPay;
+    // Status and cancel are cloud Terminal API calls, so they stay off for Tap to
+    // Pay orders. A referenced refund is the exception: the Payments app accepts a
+    // ReversalRequest over the same App Link a payment uses. Both routes still need
+    // a POI transaction to name — without one there is nothing to reverse.
+    const canRefund = (o.status === 'paid' || o.status === 'partially_refunded' || o.status === 'refund_failed') && o.poiTransactionId;
     // Reprinting uses ReceiptReprintFlag, which Adyen does not support for the
     // Android Payments app, and only makes sense on terminals with a printer.
     // Keyed off "the payment succeeded" rather than the current status: a later
@@ -2196,7 +2219,14 @@ const $refundTypeUnref = document.getElementById('refund-type-unreferenced');
 function promptRefund(orderId) {
   const order = state.orders.find(o => o.id === orderId);
   if (!order) return;
-  if (!ensureTerminalMatch(order)) return;
+  // A Tap to Pay refund is bound to the boarded device rather than to a terminal
+  // in the list, so it is checked against the installation instead.
+  if (order.viaTapToPay) {
+    const blocked = ttpActionBlock(order);
+    if (blocked) { showToast(blocked, 'warning'); return; }
+  } else if (!ensureTerminalMatch(order)) {
+    return;
+  }
   _refundOrderId = orderId;
   const cur = state.config.currency || 'EUR';
   const refunded = order.refundedAmount || 0;
@@ -2219,8 +2249,10 @@ function promptRefund(orderId) {
   document.querySelector('input[name="refund-type"][value="referenced"]').checked = true;
   $refundAmountRow.classList.remove('hidden');
 
+  // Unreferenced refunds go out over the cloud Terminal API, which cannot reach
+  // the Payments app, so Tap to Pay orders are offered the referenced route only.
   const isCard = !order.paymentBrand || !order.paymentBrand.match(/duitnow|paynow|alipay|wechat|grabpay/i);
-  $refundTypeUnref.style.display = isCard ? '' : 'none';
+  $refundTypeUnref.style.display = isCard && !order.viaTapToPay ? '' : 'none';
 
   $refundModal.classList.remove('hidden');
 }
@@ -2240,6 +2272,43 @@ function setRefundModalState(mode) {
   }
 }
 
+// A Tap to Pay refund cannot be awaited the way a cloud one is: handing over to
+// the Payments app navigates this page away, and the outcome arrives as a fresh
+// page load at /ttp/refund. What the refund was for is parked on the order by the
+// server, because nothing in this tab survives the handover.
+async function ttpStartRefund(order, amount) {
+  const installationId = localStorage.getItem('ttp_installationId') || '';
+  setRefundModalState('processing');
+  $refundResult.className = 'refund-result processing';
+  $refundResult.textContent = 'Opening the Payments app…';
+  $refundResult.classList.remove('hidden');
+
+  const fail = (msg) => {
+    $refundResult.className = 'refund-result error';
+    $refundResult.textContent = msg;
+    setRefundModalState('done');
+    _refundOrderId = null;
+  };
+
+  try {
+    const res = await fetch('/api/taptopay/refund-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId: order.id, amount, installationId })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.request) {
+      showApiResponse('Tap to Pay — refund request', data);
+      fail(data.error || 'Could not build the refund request');
+      return;
+    }
+    window.location.href =
+      `${TTP_LINK_BASE}/nexo?request=${data.request}&returnUrl=${encodeURIComponent(ttpReturnUrl('refund'))}`;
+  } catch (err) {
+    fail(`Refund error: ${err.message}`);
+  }
+}
+
 async function executeRefund() {
   if (!_refundOrderId) return;
   const refundType = document.querySelector('input[name="refund-type"]:checked').value;
@@ -2249,6 +2318,11 @@ async function executeRefund() {
     showToast('Invalid refund amount', 'warning');
     return;
   }
+
+  // The Payments app is only reachable over the App Link, never over the cloud
+  // endpoint the two /api/refund routes use.
+  const refundOrder = state.orders.find(o => o.id === _refundOrderId);
+  if (refundOrder?.viaTapToPay) return ttpStartRefund(refundOrder, amount);
 
   setRefundModalState('processing');
   $refundResult.className = 'refund-result processing';
@@ -2914,15 +2988,24 @@ async function ttpRevoke() {
   }
 }
 
-// Handles App Link returns at /ttp/check, /ttp/board, /ttp/pay.
+// Handles App Link returns at /ttp/check, /ttp/board, /ttp/pay, /ttp/refund.
 // Returns true if this page load was an App Link return.
 async function handleTtpReturn() {
-  const m = window.location.pathname.match(/^\/ttp\/(check|board|pay)$/);
+  const m = window.location.pathname.match(/^\/ttp\/(check|board|pay|refund)$/);
   if (!m) return false;
   const step = m[1];
   const params = new URLSearchParams(window.location.search);
   const all = {}; params.forEach((v, k) => { all[k] = v; });
   const clean = () => history.replaceState({}, '', '/');
+
+  // A transaction short response returns two Base64URL params, `response` and
+  // `securityTrailer`. They are read raw from the query string, restoring any '+'
+  // that URL decoding turned into a space, so the ciphertext reaches the backend
+  // uncorrupted. Payments and refunds come back the same way.
+  const rawFrom = (name) => {
+    const q = window.location.search.match(new RegExp('[?&]' + name + '=([^&]*)'));
+    return q ? decodeURIComponent(q[1]).replace(/ /g, '+') : '';
+  };
 
   if (step === 'check') {
     const boarded = params.get('boarded') === 'true';
@@ -2985,15 +3068,52 @@ async function handleTtpReturn() {
     clean(); return true;
   }
 
+  if (step === 'refund') {
+    const encrypted = rawFrom('response');
+    const securityTrailer = rawFrom('securityTrailer');
+    showApiResponse('Tap to Pay — refund link', {
+      appLink: window.location.href,
+      params: all
+    });
+    clean();
+    if (!encrypted) {
+      // Nothing decryptable came back, so there is no outcome to report. The order
+      // keeps its parked refund and stays refundable, which is the safe way round:
+      // a reversal that did go through can be seen in the next result.
+      openTtpModal();
+      const detail = Object.keys(all).length ? JSON.stringify(all, null, 2) : '(no parameters returned)';
+      ttpMessage(`Returned from Payments app:\n\n${detail}`, 'info', true);
+      showToast('Tap to Pay returned — see the dialog', 'info');
+      return true;
+    }
+    closeTtpModal();
+    showOverlayWorking('Reading the refund result...');
+    try {
+      const res = await fetch('/api/taptopay/refund-result', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ response: encrypted, securityTrailer })
+      });
+      const data = await res.json();
+      showApiResponse('Tap to Pay — refund result', data);
+      if (!res.ok) {
+        showOverlayResult(false, `Could not read the response: ${data.error || 'error'}`);
+        return true;
+      }
+      if (data.result === 'Success') {
+        const o = data.order;
+        showOverlayResult(true, o && o.status === 'partially_refunded'
+          ? `Partial refund successful (${(o.refundedAmount || 0).toFixed(2)} / ${(o.amount || 0).toFixed(2)})`
+          : 'Refund successful');
+      } else {
+        showOverlayResult(false, `Refund ${data.result || 'failed'}${data.errorCondition ? ` (${data.errorCondition})` : ''}`);
+      }
+    } catch (err) {
+      showOverlayResult(false, `Could not read the response: ${err.message}`);
+    }
+    return true;
+  }
+
   if (step === 'pay') {
-    // The Payments app short response returns two params: `response` and
-    // `securityTrailer`, both Base64URL. Read them raw from the query string
-    // (restoring any '+' that URL decoding turned into spaces) so they are not
-    // corrupted before being sent to the backend for decryption.
-    const rawFrom = (name) => {
-      const m = window.location.search.match(new RegExp('[?&]' + name + '=([^&]*)'));
-      return m ? decodeURIComponent(m[1]).replace(/ /g, '+') : '';
-    };
     const encrypted = rawFrom('response');
     const securityTrailer = rawFrom('securityTrailer');
     // Log the raw incoming App Link before we wipe the URL.
