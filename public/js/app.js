@@ -1957,6 +1957,8 @@ async function processPayment(allowedBrand, forceEntryMode, extra) {
 
 async function paySync(body) {
   showOverlay(body.amount, body.currency);
+  // Read after showOverlay, which is what claims the dialog for this payment.
+  const generation = _overlayGeneration;
   state.pendingServiceId = body.serviceId;
   if (!state._syncLogged) state._syncLogged = {};
   state._syncLogged[body.serviceId] = true;
@@ -1964,10 +1966,22 @@ async function paySync(body) {
   // sends before it replies -- leaves the outcome to the reply below.
   state._overlayOwner = body.serviceId;
 
-  try {
-    const controller = new AbortController();
-    state._abortController = controller;
+  const controller = new AbortController();
+  state._abortController = controller;
 
+  // Every one of these is shared with whatever the till is doing by the time this
+  // call comes back, which -- once the dialog has been put away -- can be a
+  // different sale altogether. Clearing them outright handed the new payment's
+  // cancel button a null pendingServiceId, which is its signal to abort the
+  // in-flight request instead, so each is only dropped while it still names this
+  // one.
+  const releaseIfMine = () => {
+    if (state.pendingServiceId === body.serviceId) state.pendingServiceId = null;
+    if (state._overlayOwner === body.serviceId) state._overlayOwner = null;
+    if (state._abortController === controller) state._abortController = null;
+  };
+
+  try {
     const res = await fetch('/api/payment', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1976,32 +1990,30 @@ async function paySync(body) {
     });
 
     const data = await res.json();
-    state.pendingServiceId = null;
-    state._abortController = null;
-    state._overlayOwner = null;
+    releaseIfMine();
     showApiResponse('Payment', data.adyenResponse || data);
 
     if (data.order) {
       const paid = data.order.status === 'paid';
-      showOverlayResult(paid, paymentOutcomeMessage(data.order));
+      reportOutcome(generation, paid, paymentOutcomeMessage(data.order));
+      // Not conditional on the dialog: the sale went through either way, and a cart
+      // left standing would be rung up twice.
       if (paid) clearCart();
     } else if (data.error) {
-      showOverlayResult(false, data.error);
+      reportOutcome(generation, false, data.error);
     }
   } catch (err) {
-    // Cleared on this path too, not only on the one above. Left set, it named a
-    // payment this call had already reported the failure of and closed the dialog
-    // on, so the terminal's later SSE update still matched it and pushed the dialog
-    // back on screen for a sale the cashier was done with.
-    state.pendingServiceId = null;
-    state._abortController = null;
-    state._overlayOwner = null;
+    // Released on this path too, not only on the one above. Left set,
+    // pendingServiceId named a payment this call had already reported the failure of
+    // and closed the dialog on, so the terminal's later SSE update still matched it
+    // and pushed the dialog back on screen for a sale the cashier was done with.
+    releaseIfMine();
     if (err.name === 'AbortError') {
       // User cancelled the fetch — allow SSE to log the response
       if (state._syncLogged) delete state._syncLogged[body.serviceId];
-      showOverlayResult(false, 'Payment Cancelled');
+      reportOutcome(generation, false, 'Payment Cancelled');
     } else {
-      showOverlayResult(false, `Error: ${err.message}`);
+      reportOutcome(generation, false, `Error: ${err.message}`);
     }
   }
 }
@@ -2216,9 +2228,18 @@ function rearmCancel(label) {
   $btnCancelPay.textContent = label;
 }
 
-// A press is allowed while an earlier request is still out, so the timer outlives
-// the call that armed it and each call only ever clears its own.
-let _cancelsInFlight = 0;
+// Reveals the way out of the dialog, and leaves it revealed. It is offered because
+// this payment has either been asked to stop for long enough with no word back, or
+// has been refused outright -- and neither of those stops being true because an
+// answer to the abort eventually turned up. Hiding it again on the answer, as this
+// used to, produced the worst combination available: a cancel that came back as an
+// error inside ten seconds cleared the timer that would have offered the way out,
+// so the one case where the cashier most needs to walk away was the one case that
+// took the option off screen. It is now withdrawn only by the dialog reaching a
+// result or being claimed for another payment, both of which hide it themselves.
+function offerWayOut() {
+  $btnDetachOverlay.classList.remove('hidden');
+}
 
 async function cancelPayment() {
   if (!state.pendingServiceId) {
@@ -2254,10 +2275,9 @@ async function cancelPayment() {
   const slowTimer = setTimeout(() => {
     if (!stillWaiting()) return;
     $overlayMsg.textContent = 'Still no answer to the cancel. Ask again, or leave it running in the background.';
-    $btnDetachOverlay.classList.remove('hidden');
+    offerWayOut();
   }, CANCEL_SLOW_MS);
 
-  _cancelsInFlight++;
   try {
     $btnCancelPay.disabled = true;
     $btnCancelPay.textContent = 'Cancelling...';
@@ -2272,33 +2292,53 @@ async function cancelPayment() {
 
     if (!cancelRes.ok) {
       showToast(cancelData.error || 'Cancel failed', 'error');
-      rearmCancel('Cancel Payment');
+      if (stillWaiting()) {
+        // The cancel got nowhere, so the sale is still live and the dialog is still
+        // holding the till hostage over it. Offered at once rather than on the
+        // timer, which an answer this quick would only have cancelled.
+        rearmCancel('Cancel Payment');
+        offerWayOut();
+      }
       return;
     }
+
+    // The dialog has moved on to another payment, or been put away. The answer is
+    // already in the log and the toast below reports it; writing it into the dialog
+    // would describe this sale over the top of a different one.
+    if (!stillWaiting()) return;
 
     // The in-flight /api/payment fetch used to be aborted here, which threw away
     // the one message that says what the terminal actually did. If the abort came
     // too late the shopper still pays, and the overlay had already claimed the
     // sale was cancelled. It now stays open until the PaymentResponse arrives.
     $overlayMsg.textContent = cancelData.accepted
-      ? 'Cancel sent — waiting for the terminal. Ask again if it carries on.'
+      ? 'Cancel sent — waiting for the terminal'
       : 'The terminal refused the cancel — the sale may still complete';
 
     // Pressable again rather than disabled on a promise nobody keeps: the answer
     // says the abort was received, not that the sale stopped, and the terminal may
     // have been unable to act on it yet.
     rearmCancel('Cancel again');
-    showToast('Cancel sent — waiting for the terminal', 'warning');
+
+    // A refusal is as good a reason to walk away as silence is: the sale is running,
+    // the terminal has said it will not be stopped, and only its PaymentResponse is
+    // going to end this.
+    if (!cancelData.accepted) offerWayOut();
+
+    showToast(cancelData.accepted
+      ? 'Cancel sent — waiting for the terminal'
+      : 'The terminal refused the cancel — the sale may still complete', 'warning');
   } catch (err) {
     showToast(`Cancel failed: ${err.message}`, 'error');
-    rearmCancel('Cancel Payment');
+    if (stillWaiting()) {
+      rearmCancel('Cancel Payment');
+      offerWayOut();
+    }
   } finally {
     // This call's answer is here, so its own timers have nothing left to announce.
+    // The way out is deliberately not withdrawn -- see offerWayOut.
     clearTimeout(rearmTimer);
     clearTimeout(slowTimer);
-    // Only once nothing is outstanding, or an early answer would take the way out
-    // from under a press that is still waiting on one.
-    if (--_cancelsInFlight === 0) $btnDetachOverlay.classList.add('hidden');
   }
 }
 
@@ -2469,9 +2509,29 @@ let _overlayHideTimer = null;
 // instead. Cleared by the next payment, which owns the dialog again.
 let _overlayDetached = false;
 
+// Bumped every time the dialog is claimed for something new. A sync payment holds
+// its `await` for as long as the terminal takes, and once the dialog has been put
+// away the next sale can be rung up while the last one is still live -- so a reply
+// can arrive to find the dialog describing a different payment entirely. Comparing
+// the count it started with is what tells the two apart; `_overlayDetached` alone
+// cannot, because starting that next payment clears it.
+let _overlayGeneration = 0;
+
+// Reports an outcome only if the dialog still belongs to the flow that asked for
+// it. Anything older has to settle for a toast: its result is real and worth
+// showing, but not over the top of a payment that is still being taken.
+function reportOutcome(generation, success, message) {
+  if (generation !== _overlayGeneration) {
+    showToast(message, success ? 'success' : 'warning');
+    return;
+  }
+  showOverlayResult(success, message);
+}
+
 function showOverlay(amount, currency) {
   clearTimeout(_overlayHideTimer);
   _overlayDetached = false;
+  _overlayGeneration++;
   state._cancelling = false;
   const cur = currency || state.config.currency || 'EUR';
   $overlaySpinner.classList.remove('hidden');
@@ -2497,6 +2557,7 @@ function showOverlay(amount, currency) {
 function showOverlayWorking(message) {
   clearTimeout(_overlayHideTimer);
   _overlayDetached = false;
+  _overlayGeneration++;
   $overlaySpinner.classList.remove('hidden');
   $overlayTitle.textContent = 'Payment Result';
   $overlayMsg.textContent = message;
