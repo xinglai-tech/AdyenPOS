@@ -53,27 +53,18 @@ function planCancel(order, { now = Date.now(), minDelayMs = DEFAULT_MIN_ABORT_DE
   return { ok: true, delayMs: Math.max(0, Math.min(minDelayMs, minDelayMs - elapsed)) };
 }
 
-// One abort is not enough. The delay above stops the abort overtaking the payment
-// in the cloud, but it cannot know when the terminal finished starting the
-// transaction and became able to act on an abort at all -- a cancel pressed the
-// moment the button appears can still land in that window and be discarded, and
-// nothing in the response distinguishes that from an abort that worked.
+// One abort is not always enough, and there used to be a timed retry loop here for
+// it: the delay above stops the abort overtaking the payment in the cloud, but it
+// cannot know when the terminal became able to act on an abort at all, and an abort
+// discarded for arriving too early looks exactly like one that worked.
 //
-// So the abort is repeated while the order is still pending. This is safe to do:
-// the request names the ServiceID it refers to, so a repeat that arrives after the
-// transaction has already stopped cannot affect anything else, and the loop ends
-// as soon as the PaymentResponse settles the order.
-const DEFAULT_ABORT_RETRY_MS = Number(process.env.ABORT_RETRY_MS) || 2000;
-const DEFAULT_ABORT_ATTEMPTS = Number(process.env.ABORT_ATTEMPTS) || 3;
-
-// `attempt` is the number already made, so the first call passes 1.
-function shouldRetryAbort(order, attempt, maxAttempts = DEFAULT_ABORT_ATTEMPTS) {
-  if (attempt >= maxAttempts) return false;
-  // Gone from the list, or the PaymentResponse has landed and decided the outcome.
-  if (!order || order.status !== 'pending') return false;
-  // Nobody asked for this any more.
-  return order.cancelRequested === true;
-}
+// The loop is gone because its timing was guesswork against a figure it did not
+// know. Adyen's answer to a single abort has been seen to take tens of seconds, so
+// a repeat sent 2s after the first went out long after the window it existed to
+// cover; by then the sale had usually finished and the terminal answered with a
+// Reject naming a ServiceID it no longer had. The retry belongs to whoever can see
+// the sale is still running -- the cashier, whose cancel button is re-armed once
+// the first abort has been answered.
 
 // How long to wait for a payment to be recorded as sent before giving up and
 // aborting anyway. The ceiling is set by /api/payment's reachability check, which
@@ -82,10 +73,7 @@ const DEFAULT_DISPATCH_WAIT_MS = Number(process.env.ABORT_DISPATCH_WAIT_MS) || 1
 
 module.exports = {
   planCancel,
-  shouldRetryAbort,
   CANCELLABLE_STATUSES,
   DEFAULT_MIN_ABORT_DELAY_MS,
-  DEFAULT_ABORT_RETRY_MS,
-  DEFAULT_ABORT_ATTEMPTS,
   DEFAULT_DISPATCH_WAIT_MS
 };

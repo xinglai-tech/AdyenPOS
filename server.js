@@ -9,10 +9,7 @@ const { v4: uuidv4 } = require('uuid');
 const nexoCrypto = require('./nexoCrypto');
 const { readInputResult, readEnableServiceResult } = require('./nexoParse');
 const orderStore = require('./orderStore');
-const {
-  planCancel, shouldRetryAbort,
-  DEFAULT_ABORT_RETRY_MS, DEFAULT_ABORT_ATTEMPTS, DEFAULT_DISPATCH_WAIT_MS
-} = require('./cancelPolicy');
+const { planCancel, DEFAULT_DISPATCH_WAIT_MS } = require('./cancelPolicy');
 const { REFUNDABLE_STATUSES, ttpRefundBlock, buildReversalRequest } = require('./ttpRefundPolicy');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -1802,35 +1799,6 @@ async function awaitDispatch(serviceId) {
   return orders.find(o => o.serviceId === serviceId) || null;
 }
 
-// Serviced in the background after /api/cancel has already replied, so the cashier
-// is not left watching a spinner while this runs. One entry per ServiceID, because
-// the endpoint can be called again by hand.
-const _abortLoops = new Set();
-
-async function keepAborting(serviceId, poiId) {
-  if (_abortLoops.has(serviceId)) return;
-  _abortLoops.add(serviceId);
-  try {
-    let attempt = 1;
-    while (shouldRetryAbort(orders.find(o => o.serviceId === serviceId), attempt, DEFAULT_ABORT_ATTEMPTS)) {
-      await sleep(DEFAULT_ABORT_RETRY_MS);
-      // Re-read after the wait: the PaymentResponse may have landed while it ran.
-      const order = orders.find(o => o.serviceId === serviceId);
-      if (!shouldRetryAbort(order, attempt, DEFAULT_ABORT_ATTEMPTS)) return;
-      attempt++;
-      try {
-        await abortPayment(serviceId, poiId);
-      } catch (err) {
-        // The payment is still being awaited elsewhere and will report the real
-        // outcome; a failed retry is not worth failing anything over.
-        console.warn(`[Cancel] retry ${attempt} for ${serviceId} failed: ${err.message}`);
-      }
-    }
-  } finally {
-    _abortLoops.delete(serviceId);
-  }
-}
-
 // This endpoint asks the terminal to stop; it does not decide the outcome. See
 // cancelPolicy.js for why an accepted abort is not a cancelled payment. The order
 // keeps its 'pending' status and only the PaymentResponse resolves it.
@@ -1877,13 +1845,14 @@ app.post('/api/cancel', async (req, res) => {
       orderChanged(order);
     }
 
+    // One abort per press. This used to be followed by a background retry loop, on
+    // the grounds that an abort landing before the terminal can act on one is
+    // discarded silently. But Adyen's answer to an abort can take tens of seconds,
+    // so a retry fired on a timer went out long after the window it was meant to
+    // cover -- by then the sale had usually ended, and the terminal answered the
+    // repeat with a Reject naming a ServiceID it no longer knew. The client re-arms
+    // its cancel button instead, which puts the retry where the information is.
     res.json({ ok: true, accepted, adyenResponse: data });
-
-    // Deliberately not awaited. A cancel pressed the instant the button appears can
-    // reach a terminal that has the payment but is not yet able to act on an abort,
-    // and the response cannot tell that apart from an abort that worked. Repeating
-    // while the order is still pending is what closes that window.
-    keepAborting(serviceId, poiId);
   } catch (err) {
     res.status(500).json({ error: err.message, code: err.code });
   }

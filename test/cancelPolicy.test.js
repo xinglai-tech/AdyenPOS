@@ -4,7 +4,7 @@
 // sale went through anyway. These pin down the two rules that prevent it.
 const test = require('node:test');
 const assert = require('node:assert');
-const { planCancel, shouldRetryAbort } = require('../cancelPolicy');
+const { planCancel } = require('../cancelPolicy');
 
 const MIN = 1500;
 const NOW = 1_800_000_000_000;
@@ -79,33 +79,12 @@ test('a paid order is refused even though its dispatch was recent', () => {
   assert.equal(plan.ok, false);
 });
 
-// One abort is not enough: the delay keeps it behind the payment, but nothing tells
-// us when the terminal became able to act on an abort, and an abort discarded for
-// arriving too early looks exactly like one that worked.
-const cancelling = extra => pendingOrder({ cancelRequested: true, ...extra });
-
-test('an abort is repeated while the order is still pending', () => {
-  assert.equal(shouldRetryAbort(cancelling(), 1, 3), true);
-  assert.equal(shouldRetryAbort(cancelling(), 2, 3), true);
-});
-
-test('retrying stops once the attempts are used up', () => {
-  assert.equal(shouldRetryAbort(cancelling(), 3, 3), false);
-  assert.equal(shouldRetryAbort(cancelling(), 9, 3), false);
-});
-
-test('retrying stops the moment the payment response settles the order', () => {
-  // Including a success: the abort came too late, the shopper paid, and repeating
-  // it would only chase a transaction that no longer exists.
-  for (const status of ['paid', 'cancelled', 'failed', 'error']) {
-    assert.equal(shouldRetryAbort(cancelling({ status }), 1, 3), false, status);
-  }
-});
-
-test('retrying stops if the order has gone from the list', () => {
-  assert.equal(shouldRetryAbort(undefined, 1, 3), false);
-});
-
-test('an order nobody asked to cancel is never aborted by the retry loop', () => {
-  assert.equal(shouldRetryAbort(pendingOrder(), 1, 3), false);
+// Repeating an abort is no longer the server's job -- see cancelPolicy.js. A cancel
+// that was answered but did not stop the sale is pressed again by the cashier, so
+// the only rule left here is that a second press is still allowed while the order
+// is pending, even though a cancel has already been asked for.
+test('a pending order that has already been asked to cancel may be aborted again', () => {
+  const plan = planCancel(pendingOrder({ cancelRequested: true, dispatchedAt: NOW - MIN }), { now: NOW, minDelayMs: MIN });
+  assert.equal(plan.ok, true);
+  assert.equal(plan.delayMs, 0);
 });
