@@ -2782,10 +2782,12 @@ function bindEvents() {
     state.isAsync = e.target.checked;
     localStorage.setItem('posAsyncMode', state.isAsync);
     const displayEl = document.getElementById('terminal-display');
+    // Hidden, not emptied. Display notifications are collected in both modes now,
+    // so wiping the panel here threw away the narration of a transaction that was
+    // still running -- and switching back showed 'Idle' over a live sale until the
+    // next notification happened to arrive, which for a terminal sitting on
+    // 'Waiting for PIN...' is never.
     displayEl.style.display = state.isAsync ? '' : 'none';
-    if (!state.isAsync) {
-      clearTerminalDisplay();
-    }
     showToast(state.isAsync ? 'Switched to Async mode' : 'Switched to Sync mode', 'info');
   });
 
