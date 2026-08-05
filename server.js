@@ -423,11 +423,17 @@ async function adyenRequest(endpoint, body, opts = {}) {
   }
 }
 
-// --------------- Terminal reachability preflight ---------------
-// `connectedTerminals` is answered by Adyen from its own records, so it returns in
-// well under a second and never waits on the device. That makes it cheap enough to
-// call before anything that would otherwise sit blocked against a terminal that
-// is not there. Cached briefly so a burst of requests costs one lookup.
+// --------------- Connected terminals ---------------
+// Answered by Adyen from its own records, so it returns in well under a second and
+// never waits on the device. Cached briefly so a burst of requests costs one lookup.
+//
+// This used to also run as a preflight before every terminal-bound request, to stop
+// one being sent to a device that was not there. It was removed: Adyen refuses a
+// request for an absent terminal quickly and says why, which is the same answer the
+// preflight gave -- only the preflight charged every payment a lookup to get it, up
+// to a ten-second wait that appeared nowhere in the log. What the preflight was
+// genuinely protecting was the async path, which ignored its own acknowledgement;
+// that is now checked where it belongs.
 const CONNECTED_CACHE_MS = 5000;
 let _connectedCache = { data: null, at: 0 };
 
@@ -442,29 +448,6 @@ async function fetchConnectedTerminals({ force = false, silent = false } = {}) {
   );
   _connectedCache = { data, at: Date.now() };
   return data;
-}
-
-// Resolves to null when the terminal can be used, or to a response body describing
-// why it cannot. A lookup that itself fails resolves to null: refusing to act on an
-// inconclusive check would block a working terminal.
-async function terminalUnreachableReason(poiId) {
-  if (!poiId) return { error: 'No terminal is selected' };
-  try {
-    // Silent: this lookup is the server's own bookkeeping, and logging it would put
-    // a request the user never made above the one they are waiting on.
-    const ids = (await fetchConnectedTerminals({ silent: true }))?.uniqueTerminalIds || [];
-    if (ids.includes(poiId)) return null;
-    console.log(`[Preflight] ${poiId} is not in connectedTerminals (${ids.length} online), refusing the request`);
-    return {
-      error: `${poiId} is not connected, so the request was not sent to it. Bring the terminal online and try again.`,
-      terminalOffline: true,
-      poiId,
-      connectedTerminals: ids
-    };
-  } catch (err) {
-    console.warn('[Preflight] connectedTerminals lookup failed, continuing:', err.message);
-    return null;
-  }
 }
 
 // --------------- API: Config (expose non-secret config to frontend) ---------------
@@ -1022,9 +1005,6 @@ app.post('/api/reprint-receipt', async (req, res) => {
   const poiId = order.terminalId || getActivePoiId();
   if (!poiId) return res.status(400).json({ error: 'No terminal is selected' });
 
-  const unreachable = await terminalUnreachableReason(poiId);
-  if (unreachable) return res.status(409).json(unreachable);
-
   try {
     // Prefer the receipt data already stored with the order: it survives even
     // after the terminal has dropped the transaction from its local history.
@@ -1560,6 +1540,22 @@ const FAILURE_MESSAGES = {
   WrongPIN: 'Wrong PIN entered'
 };
 
+// Adyen refuses an async submission with a JSON body rather than the plain 'ok' it
+// answers when the request has been taken. The shape varies by reason, so the known
+// carriers are tried in turn and the raw body is the last resort -- better a cashier
+// sees something they can quote than a bare 'submission refused'.
+function describeAsyncRefusal(data) {
+  const fromResponse = data?.SaleToPOIResponse?.PaymentResponse?.Response;
+  const text = data?.message
+    || data?.error
+    || fromResponse?.AdditionalResponse
+    || fromResponse?.ErrorCondition
+    || (typeof data?.raw === 'string' ? data.raw : '');
+  return text
+    ? `Adyen did not accept the payment request: ${text}`
+    : 'Adyen did not accept the payment request, so nothing was sent to the terminal.';
+}
+
 // Returns '' for a successful payment, so the caller can assign unconditionally and
 // have a later success clear a reason left over from an earlier attempt.
 function describeFailure(paymentResponse) {
@@ -1624,10 +1620,7 @@ app.post('/api/payment', async (req, res) => {
     };
   }
 
-  // Checked before the order is recorded: a payment that was never sent should not
-  // leave a pending order in the list for the cashier to chase.
-  const unreachable = await terminalUnreachableReason(getActivePoiId());
-  if (unreachable) return res.status(409).json(unreachable);
+  if (!getActivePoiId()) return res.status(400).json({ error: 'No terminal is selected' });
 
   const header = makeHeader('Payment');
   if (clientServiceId) header.ServiceID = clientServiceId;
@@ -1703,7 +1696,25 @@ app.post('/api/payment', async (req, res) => {
     const data = await adyenRequest(endpoint, payload, { label: 'Payment' });
 
     if (useAsync) {
-      // Async: respond immediately; real result arrives via webhook
+      // The async endpoint answers with the text 'ok' once Adyen has taken the
+      // request for delivery; the terminal's own answer arrives later by webhook.
+      // That acknowledgement used to be ignored and 'submitted' returned regardless,
+      // so a request Adyen refused outright -- which is what happens, in well under
+      // a second, when the terminal is not connected -- left an order sitting
+      // pending for a webhook that was never coming. The reachability preflight was
+      // covering for this; checking the answer here is what it was standing in for.
+      //
+      // A refusal is a definite 'failed': nothing reached the terminal, so unlike a
+      // timeout there is no unknown outcome to resolve later. If the acknowledgement
+      // is ever something other than 'ok' on success, the webhook still settles the
+      // order by ServiceID and corrects the status.
+      if (data?.raw !== 'ok') {
+        order.status = 'failed';
+        order.failureReason = describeAsyncRefusal(data);
+        order.error = order.failureReason;
+        orderChanged(order);
+        return res.status(502).json({ error: order.failureReason, orderId: transactionId });
+      }
       return res.json({ orderId: transactionId, serviceId: header.ServiceID, status: 'submitted' });
     }
 
@@ -1900,9 +1911,6 @@ app.post('/api/refund', async (req, res) => {
     return res.status(400).json({ error: 'Refund amount must be greater than 0' });
   }
 
-  const unreachable = await terminalUnreachableReason(order.terminalId || getActivePoiId());
-  if (unreachable) return res.status(409).json(unreachable);
-
   const reversalRequest = buildReversalRequest(order, amount, uuidv4(), new Date().toISOString());
 
   const refundHeader = makeHeader('Reversal');
@@ -1943,9 +1951,6 @@ app.post('/api/refund/unreferenced', async (req, res) => {
   if (amount > remaining) {
     return res.status(400).json({ error: `Amount exceeds remaining refundable: ${remaining.toFixed(2)}` });
   }
-
-  const unreachable = await terminalUnreachableReason(order.terminalId || getActivePoiId());
-  if (unreachable) return res.status(409).json(unreachable);
 
   const unrefHeader = makeHeader('Payment');
 

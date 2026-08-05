@@ -859,7 +859,6 @@ async function reprintReceipt(serviceId, btn) {
     if (res.ok) {
       showToast('Receipt sent to the terminal', 'success');
     } else {
-      syncTerminalStateFromError(data);
       showRequestError(data, 'Reprint failed');
     }
   } catch (err) {
@@ -979,19 +978,6 @@ function showTerminalMismatchBanner(orderTerminalId, reason = 'mismatch') {
     name,
     document.createTextNode(tail)
   ], 'warning', 6000);
-}
-
-// The server refuses terminal-bound requests it knows cannot be delivered, and
-// says so with `terminalOffline`. Its verdict is fresher than ours, so adopt it:
-// the buttons and the terminal card then agree with what just happened.
-function syncTerminalStateFromError(data) {
-  if (!data || !data.terminalOffline) return false;
-  if (Array.isArray(data.connectedTerminals)) {
-    state._terminalOnlineSet = new Set(data.connectedTerminals);
-    state._terminalChecked = true;
-    renderTerminals();
-  }
-  return true;
 }
 
 function ensureTerminalMatch(order) {
@@ -1795,8 +1781,7 @@ async function checkTerminal(opts) {
     // -- over a call that is answered by Adyen from its own records and never
     // reaches a device at all. After a silent re-check it did that without a word.
     //
-    // Nothing is known now, so the last known answer stands. This is the policy the
-    // server already applies in terminalUnreachableReason: an inconclusive check
+    // Nothing is known now, so the last known answer stands: an inconclusive check
     // must not be allowed to block a terminal that is working.
     if (!res.ok || !Array.isArray(data.uniqueTerminalIds)) {
       console.warn('Terminal check gave no answer, keeping the last known state:', data.error || res.status);
@@ -1991,7 +1976,6 @@ async function paySync(body) {
       showOverlayResult(paid, paymentOutcomeMessage(data.order));
       if (paid) clearCart();
     } else if (data.error) {
-      syncTerminalStateFromError(data);
       showOverlayResult(false, data.error);
     }
   } catch (err) {
@@ -2024,7 +2008,6 @@ async function payAsync(body) {
       showToast('Payment submitted — waiting for terminal response', 'info');
       clearCart();
     } else if (data.error) {
-      syncTerminalStateFromError(data);
       showToast(`Payment error: ${data.error}`, 'error');
     }
   } catch (err) {
@@ -2056,7 +2039,6 @@ async function queryOrderStatus(serviceId, btnEl) {
     // A refused or timed-out call carries no TransactionStatusResponse at all, so
     // without this the failure passed silently and the button just re-enabled.
     if (!res.ok) {
-      syncTerminalStateFromError(data);
       showRequestError(data, 'Status check failed');
       return;
     }
@@ -2112,7 +2094,6 @@ async function cancelOrder(serviceId, btnEl) {
     const data = await res.json();
     showApiResponse(cancelTitle(data.adyenResponse), data.adyenResponse || data);
     if (!res.ok) {
-      syncTerminalStateFromError(data);
       showRequestError(data, 'Cancel failed');
       return;
     }
@@ -2237,7 +2218,6 @@ async function cancelPayment() {
     showApiResponse(cancelTitle(cancelData.adyenResponse), cancelData.adyenResponse || cancelData);
 
     if (!cancelRes.ok) {
-      syncTerminalStateFromError(cancelData);
       showToast(cancelData.error || 'Cancel failed', 'error');
       $btnCancelPay.disabled = false;
       $btnCancelPay.textContent = 'Cancel Payment';
@@ -2413,7 +2393,6 @@ async function executeRefund() {
       $refundResult.className = 'refund-result success';
       $refundResult.textContent = msg;
     } else {
-      syncTerminalStateFromError(data);
       $refundResult.className = 'refund-result error';
       $refundResult.textContent = data.order?.status || data.error || 'Refund failed';
     }
