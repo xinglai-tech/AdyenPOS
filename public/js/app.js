@@ -700,8 +700,8 @@ function renderOrders() {
 
     // In async mode this list is where a cancel is pressed -- there is no payment
     // dialog to press one in -- so both of the waits that dialog keeps have to be
-    // kept here too. Before the first press the payment needs time to reach the
-    // terminal, and after one the terminal needs time to act on what it was sent.
+    // kept here too: one before the payment can be cancelled at all, one after a
+    // cancel has been asked for. See cancelWaitMsFor.
     //
     // Outside those windows the button stays pressable, however many times the
     // cashier needs it. It used to latch off for good on cancelRequested, which in
@@ -710,18 +710,17 @@ function renderOrders() {
     // the terminal timed out minutes later. The server never refused a second
     // attempt; only this button did.
     const lastCancelAt = Math.max(o.cancelRequestedAt || 0, state._cancelPressedAt?.[o.serviceId] || 0);
-    const cancelWaitMs = o.status === 'pending' && !o.viaTapToPay
-      ? (lastCancelAt
-          ? CANCEL_REARM_MS - (Date.now() - lastCancelAt)
-          : CANCEL_ARM_MS - (Date.now() - orderDispatchedAt(o)))
-      : 0;
+    const cancelWaitMs = o.status === 'pending' && !o.viaTapToPay ? cancelWaitMsFor(o, lastCancelAt) : 0;
     if (cancelWaitMs > 0) nextArm = Math.min(nextArm, cancelWaitMs);
     const cancelOff = cancelWaitMs > 0 ? ' disabled' : off;
     const cancelLabel = lastCancelAt ? (cancelWaitMs > 0 ? 'Cancelling…' : 'Cancel again') : 'Cancel';
+    // Waiting on the acknowledgement is worth saying out loud rather than dressing up
+    // as the terminal not being ready: nothing has reached a terminal yet, and the
+    // cashier watching a card reader sit idle is owed the reason.
     const cancelTip = cancelWaitMs > 0
-      ? (lastCancelAt
-          ? 'Cancel sent — you can ask again in a moment'
-          : 'Only just sent — the terminal cannot act on a cancel yet')
+      ? (lastCancelAt ? 'Cancel sent — you can ask again in a moment'
+        : o.viaAsync && !o.acknowledgedAt ? 'Waiting for Adyen to accept the payment — there is nothing to cancel yet'
+        : 'Only just sent — the terminal cannot act on a cancel yet')
       : blocked;
 
     // A cancellation is not a failure. The reason for one only ever restates the
@@ -2275,6 +2274,43 @@ const CANCEL_REARM_MS = 3000;
 // Two seconds was not enough in practice: a cancel pressed the moment it came within
 // reach still beat its payment to the terminal.
 const CANCEL_ARM_MS = 2500;
+
+// An async payment can also never be acknowledged -- the server it was in flight on
+// restarted, say, leaving an order read back from storage as pending with nothing
+// recorded against it. Waiting on that acknowledgement forever would put the cancel
+// button permanently out of reach, which is the lock this whole path exists to
+// avoid, so the wait for one is capped. Generous, because it is a last resort rather
+// than the normal path and pre-empting a real acknowledgement would defeat the gate
+// below: an abort's answer on the same endpoint has been seen to take twenty seconds,
+// so an acknowledgement is not assumed to be quick.
+const CANCEL_ACK_WAIT_MS = 30000;
+
+// How much longer the order list has to hold a cancel back, in ms; 0 or less means
+// it can be offered. Three waits, and which one applies is not a matter of taste:
+//
+// A cancel already asked for is waiting on the terminal to act on it, and the wait
+// is measured from the press for want of anything better -- the abort's own answer
+// says nothing about whether the terminal acted.
+//
+// A sync payment has no acknowledgement to wait for: its request stays open until
+// the terminal answers, so the dispatch is the only moment there is to measure from.
+//
+// An async payment has one, and waiting for it beats guessing. The async endpoint
+// answers 'ok' when Adyen has taken the payment for delivery, and a fixed wait from
+// the dispatch could expire before that -- offering a cancel for a payment Adyen had
+// not yet accepted, which comes back 'Message not Found' while the sale runs on. How
+// often that actually happened is not established; what is, is that this waits on the
+// event instead of assuming a duration for it.
+//
+// The arm wait then runs from the acknowledgement rather than being replaced by it:
+// Adyen having taken the payment is not the terminal having it, and the push still
+// needs a moment.
+function cancelWaitMsFor(order, lastCancelAt) {
+  if (lastCancelAt) return CANCEL_REARM_MS - (Date.now() - lastCancelAt);
+  if (!order.viaAsync) return CANCEL_ARM_MS - (Date.now() - orderDispatchedAt(order));
+  if (order.acknowledgedAt) return CANCEL_ARM_MS - (Date.now() - order.acknowledgedAt);
+  return CANCEL_ACK_WAIT_MS - (Date.now() - orderDispatchedAt(order));
+}
 
 // Outlives the call that set it, so a payment settling inside the window would
 // otherwise arm the button of whatever came next.

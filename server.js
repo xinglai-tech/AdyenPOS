@@ -1639,6 +1639,10 @@ app.post('/api/payment', async (req, res) => {
     tenderReference: null,
     terminalId: getActivePoiId(),
     refundedAmount: 0,
+    // Which of the two endpoints is carrying this payment. Read by the order list,
+    // where the wait before a cancel is offered differs between them: only the async
+    // path has an acknowledgement to wait for.
+    viaAsync: !!useAsync,
     ...(redemption ? { loyalty: redemption } : {})
   };
   orders.unshift(order);
@@ -1712,6 +1716,18 @@ app.post('/api/payment', async (req, res) => {
         orderChanged(order);
         return res.status(502).json({ error: order.failureReason, orderId: transactionId });
       }
+      // When Adyen took it -- not when the terminal got it, which only the webhook
+      // reports. The order list holds its cancel button back until this exists,
+      // because until it does there is certainly nothing at the terminal to cancel,
+      // and an abort sent first is rejected with 'Message not Found' while the sale
+      // runs on.
+      //
+      // How long this takes has not been measured; an abort's answer on the same
+      // endpoint has been seen to take twenty seconds, which is the reason for not
+      // assuming this one is quick. Recording it is what will tell us: the gap to
+      // dispatchedAt is on every async order from here on.
+      order.acknowledgedAt = Date.now();
+      orderChanged(order);
       return res.json({ orderId: transactionId, serviceId: header.ServiceID, status: 'submitted' });
     }
 

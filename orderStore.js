@@ -56,9 +56,12 @@ const CORE_FIELDS = [
   'id', 'serviceId', 'status', 'createdAt', 'amount', 'currency', 'items',
   'terminalId', 'poiTransactionId', 'poiTimestamp', 'pspReference',
   'tenderReference', 'paymentBrand', 'maskedPan', 'refundedAmount', 'failureReason',
-  // A pending order that survives a restart has to remember that a cancel was
-  // already sent, or the list offers to send a second one.
-  'error', 'viaTapToPay', 'loyalty', 'cancelRequested'
+  // A pending order that survives a restart has to remember what its cancel button
+  // is offered on: that a cancel was already sent and when, which endpoint carried
+  // the payment, and when Adyen acknowledged it. Shedding these does not lose money,
+  // but it does leave the button either offered too early or held back too long.
+  'error', 'viaTapToPay', 'loyalty', 'cancelRequested', 'cancelRequestedAt',
+  'viaAsync', 'acknowledgedAt'
 ];
 
 // Newest first is the order the app shows, and Table Storage can only scan a
