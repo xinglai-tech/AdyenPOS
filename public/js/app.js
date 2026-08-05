@@ -2293,27 +2293,46 @@ async function cancelPayment() {
   // terminal's display notifications cannot narrate over it.
   state._cancelling = true;
 
-  // Both timers outlive this function when the answer is slow, and one press may be
-  // made while an earlier one is still out, so each of them can still be pending
-  // after the sale has been settled by its PaymentResponse -- at which point the
-  // dialog is showing a result and has nothing left to cancel. Firing then would
-  // write over that result and put the way out back on screen for a payment that is
-  // over. So they speak only while the dialog is still on the payment they were
-  // armed for.
+  // Both timers outlive this function -- the answer no longer stands them down -- and
+  // one press may be made while an earlier one is still out, so either can be pending
+  // after the sale has been settled by its PaymentResponse, at which point the dialog
+  // is showing a result and has nothing left to cancel. Firing then would write over
+  // that result and put the way out back on screen for a payment that is over. So
+  // they speak only while the dialog is still on the payment they were armed for.
   const armedFor = state.pendingServiceId;
   const stillWaiting = () => state.pendingServiceId === armedFor && !_overlayDetached;
 
-  // The request is still out when this fires. It is left to finish -- a second abort
-  // names the same ServiceID, so asking again costs nothing.
+  // Whether anything has come back for this press. Both timers below outlive the
+  // answer on purpose, so each has to know not to narrate over it.
+  let answered = false;
+
+  // The request may still be out when this fires, and is left to finish -- a second
+  // abort names the same ServiceID, so asking again costs nothing.
+  //
+  // This is the only thing that puts the button back after an accepted abort, which
+  // it did not used to be: the answer re-armed it the moment it landed. With the
+  // server no longer holding the abort back, an answer can now arrive in a few
+  // hundred milliseconds, and re-arming on it flipped the button from 'Cancelling...'
+  // to 'Cancel again' before the cashier's finger had left it -- inviting a second
+  // abort inside the window where the first is still the one the terminal has to act
+  // on. A retry offered sooner than this gap is a retry offered too early.
   const rearmTimer = setTimeout(() => {
     if (!stillWaiting()) return;
-    $overlayMsg.textContent = 'No answer to the cancel yet — you can ask again.';
+    if (!answered) $overlayMsg.textContent = 'No answer to the cancel yet — you can ask again.';
     rearmCancel('Cancel again');
   }, CANCEL_REARM_MS);
 
-  const slowTimer = setTimeout(() => {
+  // Left running once the abort has been accepted, because acceptance is not the
+  // sale ending: the terminal may take a hundred and fifty seconds to produce the
+  // PaymentResponse that does, and until this fires the dialog holds the till with
+  // no way out of it. Clearing this on any answer at all -- which is what used to
+  // happen -- only looked harmless while answers took twenty seconds and the timer
+  // had always already fired.
+  setTimeout(() => {
     if (!stillWaiting()) return;
-    $overlayMsg.textContent = 'Still no answer to the cancel. Ask again, or leave it running in the background.';
+    $overlayMsg.textContent = answered
+      ? 'The terminal has not stopped the sale yet. Ask again, or leave it running in the background.'
+      : 'Still no answer to the cancel. Ask again, or leave it running in the background.';
     offerWayOut();
   }, CANCEL_SLOW_MS);
 
@@ -2329,12 +2348,15 @@ async function cancelPayment() {
     const cancelData = await cancelRes.json();
     showApiResponse(cancelTitle(cancelData.adyenResponse), cancelData.adyenResponse || cancelData);
 
+    answered = true;
+
     if (!cancelRes.ok) {
       showToast(cancelData.error || 'Cancel failed', 'error');
       if (stillWaiting()) {
-        // The cancel got nowhere, so the sale is still live and the dialog is still
-        // holding the till hostage over it. Offered at once rather than on the
-        // timer, which an answer this quick would only have cancelled.
+        // Nothing was asked of the terminal, so there is no abort in flight to hold a
+        // second press behind: the button goes back at once, under its original
+        // label, and the timer that would relabel it is stood down.
+        clearTimeout(rearmTimer);
         rearmCancel('Cancel Payment');
         offerWayOut();
       }
@@ -2354,10 +2376,9 @@ async function cancelPayment() {
       ? 'Cancel sent — waiting for the terminal'
       : 'The terminal refused the cancel — the sale may still complete';
 
-    // Pressable again rather than disabled on a promise nobody keeps: the answer
-    // says the abort was received, not that the sale stopped, and the terminal may
-    // have been unable to act on it yet.
-    rearmCancel('Cancel again');
+    // The button is deliberately left as it is. It comes back on the timer above,
+    // which is what keeps a second abort from following the first by less than the
+    // time the terminal needs to act on either.
 
     // A refusal is as good a reason to walk away as silence is: the sale is running,
     // the terminal has said it will not be stopped, and only its PaymentResponse is
@@ -2368,16 +2389,15 @@ async function cancelPayment() {
       ? 'Cancel sent — waiting for the terminal'
       : 'The terminal refused the cancel — the sale may still complete', 'warning');
   } catch (err) {
+    answered = true;
     showToast(`Cancel failed: ${err.message}`, 'error');
     if (stillWaiting()) {
+      // As with the refusal above: the request never got an answer out of the
+      // server, so nothing is in flight for a second press to collide with.
+      clearTimeout(rearmTimer);
       rearmCancel('Cancel Payment');
       offerWayOut();
     }
-  } finally {
-    // This call's answer is here, so its own timers have nothing left to announce.
-    // The way out is deliberately not withdrawn -- see offerWayOut.
-    clearTimeout(rearmTimer);
-    clearTimeout(slowTimer);
   }
 }
 
