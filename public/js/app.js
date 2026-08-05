@@ -429,20 +429,21 @@ function updateTerminalDisplay(data) {
   renderTerminalDisplay();
 }
 
+// The clear button lives in the panel's head, not in here, so this owns every child
+// of the content box and replaces the lot. It used to insert before that button and
+// skip it when clearing, which stopped being true once the head was split out: the
+// button is no longer a child of this element, and insertBefore rejects a reference
+// node that is not one. The first event of a transaction emptied the box and threw,
+// leaving it collapsed and blank for the rest of the session.
 function renderTerminalDisplay() {
   const keys = Object.keys(_termDisplayState);
   const activeEntries = keys.filter(k => _termDisplayState[k].lines && _termDisplayState[k].lines.length > 0);
-
-  // Remove all children except the clear button
-  Array.from($terminalDisplay.children).forEach(ch => {
-    if (ch !== $btnClearDisplay) ch.remove();
-  });
 
   if (activeEntries.length === 0) {
     const idle = document.createElement('span');
     idle.className = 'terminal-display-idle';
     idle.textContent = 'Idle';
-    $terminalDisplay.insertBefore(idle, $btnClearDisplay);
+    $terminalDisplay.replaceChildren(idle);
     return;
   }
 
@@ -455,7 +456,7 @@ function renderTerminalDisplay() {
     block.innerHTML += (ts.lines || []).map(l => `<div class="terminal-display-line">${l}</div>`).join('');
     frag.appendChild(block);
   });
-  $terminalDisplay.insertBefore(frag, $btnClearDisplay);
+  $terminalDisplay.replaceChildren(frag);
 }
 
 function clearTerminalDisplay() {
@@ -463,13 +464,8 @@ function clearTerminalDisplay() {
     clearTimeout(_termDisplayState[k].clearTimer);
     delete _termDisplayState[k];
   }
-  Array.from($terminalDisplay.children).forEach(ch => {
-    if (ch !== $btnClearDisplay) ch.remove();
-  });
-  const idle = document.createElement('span');
-  idle.className = 'terminal-display-idle';
-  idle.textContent = 'Idle';
-  $terminalDisplay.insertBefore(idle, $btnClearDisplay);
+  // Nothing is active now, so the render puts the panel back to Idle by itself.
+  renderTerminalDisplay();
 }
 
 // ====================== Products ======================
@@ -2653,7 +2649,7 @@ function bindEvents() {
   $paymethodModal.querySelectorAll('.paymethod-btn').forEach(btn => {
     btn.addEventListener('click', () => processPayment(btn.dataset.brand || '', btn.dataset.entryMode || ''));
   });
-  document.getElementById('btn-clear-display').addEventListener('click', clearTerminalDisplay);
+  $btnClearDisplay.addEventListener('click', clearTerminalDisplay);
   $btnReceiptOpen.addEventListener('click', openReceiptModal);
   $btnReceiptClose.addEventListener('click', closeReceiptModal);
   $btnLogoUpload.addEventListener('click', () => $inputLogoFile.click());
