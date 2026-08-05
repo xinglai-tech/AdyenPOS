@@ -651,8 +651,15 @@ function withActionTip(buttonHtml, tip) {
   return `<span class="action-tip" data-tip="${escapeHtml(tip)}">${buttonHtml}</span>`;
 }
 
+// A cancel button that is only waiting to be armed cannot be enabled where it
+// stands, because every card here is rebuilt from scratch on each render. The list
+// is drawn again instead, once the earliest of those waits is up.
+let _cancelArmRerender = null;
+
 function renderOrders() {
   const cur = state.config.currency || 'EUR';
+  clearTimeout(_cancelArmRerender);
+  let nextArm = Infinity;
   $orderCount.textContent = state.orders.length;
   // An order can change while its dialog is open — a pending payment is the whole
   // reason the dialog has a status in it — so the dialog follows the list.
@@ -691,6 +698,32 @@ function renderOrders() {
     const blocked = orderActionBlock(o);
     const off = blocked ? ' disabled' : '';
 
+    // In async mode this list is where a cancel is pressed -- there is no payment
+    // dialog to press one in -- so both of the waits that dialog keeps have to be
+    // kept here too. Before the first press the payment needs time to reach the
+    // terminal, and after one the terminal needs time to act on what it was sent.
+    //
+    // Outside those windows the button stays pressable, however many times the
+    // cashier needs it. It used to latch off for good on cancelRequested, which in
+    // async mode left no way to ask twice: a first abort that arrived before its own
+    // payment is rejected with 'Message not Found', and the sale then ran on until
+    // the terminal timed out minutes later. The server never refused a second
+    // attempt; only this button did.
+    const lastCancelAt = Math.max(o.cancelRequestedAt || 0, state._cancelPressedAt?.[o.serviceId] || 0);
+    const cancelWaitMs = o.status === 'pending' && !o.viaTapToPay
+      ? (lastCancelAt
+          ? CANCEL_REARM_MS - (Date.now() - lastCancelAt)
+          : CANCEL_ARM_MS - (Date.now() - orderDispatchedAt(o)))
+      : 0;
+    if (cancelWaitMs > 0) nextArm = Math.min(nextArm, cancelWaitMs);
+    const cancelOff = cancelWaitMs > 0 ? ' disabled' : off;
+    const cancelLabel = lastCancelAt ? (cancelWaitMs > 0 ? 'Cancelling…' : 'Cancel again') : 'Cancel';
+    const cancelTip = cancelWaitMs > 0
+      ? (lastCancelAt
+          ? 'Cancel sent — you can ask again in a moment'
+          : 'Only just sent — the terminal cannot act on a cancel yet')
+      : blocked;
+
     // A cancellation is not a failure. The reason for one only ever restates the
     // badge sitting next to it -- "Cancelled" above "Transaction cancelled" -- and
     // red on the card is meant for the orders a cashier still has to do something
@@ -713,7 +746,7 @@ function renderOrders() {
         ${o.status === 'pending' && !o.viaTapToPay ? `
           <div class="order-card-actions">
             ${withActionTip(`<button class="btn-check-order" onclick="queryOrderStatus('${o.serviceId}', this)"${off}><i data-lucide="search"></i>Check Status</button>`, blocked)}
-            ${withActionTip(`<button class="btn-cancel-order" onclick="cancelOrder('${o.serviceId}', this)"${o.cancelRequested ? ' disabled' : off}><i data-lucide="x"></i>${o.cancelRequested ? 'Cancelling…' : 'Cancel'}</button>`, blocked)}
+            ${withActionTip(`<button class="btn-cancel-order" onclick="cancelOrder('${o.serviceId}', this)"${cancelOff}><i data-lucide="x"></i>${cancelLabel}</button>`, cancelTip)}
           </div>` : ''}
         ${canRefund || canReprint ? `
           <div class="order-card-actions">
@@ -724,6 +757,8 @@ function renderOrders() {
     `;
   }).join('');
   refreshIcons();
+
+  if (nextArm < Infinity) _cancelArmRerender = setTimeout(renderOrders, nextArm);
 }
 
 // ====================== Order detail ======================
@@ -1891,7 +1926,7 @@ async function recoverPendingOrders() {
           state.pendingServiceId = order.serviceId;
           // Sent long before this dialog was rebuilt, so the wait a fresh sale opens
           // with has already been served.
-          armCancelAfterDispatch(new Date(order.createdAt).getTime());
+          armCancelAfterDispatch(orderDispatchedAt(order));
           $overlayMsg.textContent = `Recovering order ${order.serviceId}...`;
         }
         showToast(`Order ${order.serviceId} still in progress on terminal`, 'warning');
@@ -2111,6 +2146,13 @@ async function queryOrderStatus(serviceId, btnEl) {
 
 // ====================== Cancel Order ======================
 async function cancelOrder(serviceId, btnEl) {
+  // Recorded at the press rather than left to the server's answer, which reports the
+  // cancel only once its abort has been answered -- up to twenty seconds. Any redraw
+  // in between, and the list is redrawn on every order update, would otherwise put an
+  // enabled button straight back under the cashier's finger.
+  (state._cancelPressedAt ||= {})[serviceId] = Date.now();
+  renderOrders();
+
   const original = btnEl.innerHTML;
   try {
     btnEl.disabled = true;
@@ -2136,8 +2178,14 @@ async function cancelOrder(serviceId, btnEl) {
   } catch (err) {
     showToast(`Cancel failed: ${err.message}`, 'error');
   } finally {
-    btnEl.disabled = false;
-    btnEl.innerHTML = original;
+    // The card this button belongs to may have been rebuilt while the request was
+    // out, in which case it is no longer on the page and the list is what says
+    // whether a cancel can be asked for again.
+    if (btnEl.isConnected) {
+      btnEl.disabled = false;
+      btnEl.innerHTML = original;
+    }
+    renderOrders();
   }
 }
 
@@ -2223,11 +2271,22 @@ const CANCEL_REARM_MS = 3000;
 // first 1500ms, which looks exactly like a terminal ignoring the cancel. Declining
 // to offer the button until the payment has had time to land says the same thing
 // without pretending to have done something.
-const CANCEL_ARM_MS = 2000;
+//
+// Two seconds was not enough in practice: a cancel pressed the moment it came within
+// reach still beat its payment to the terminal.
+const CANCEL_ARM_MS = 2500;
 
 // Outlives the call that set it, so a payment settling inside the window would
 // otherwise arm the button of whatever came next.
 let _cancelArmTimer = null;
+
+// When the payment behind an order went out. dispatchedAt is the server's own record
+// of it, a few milliseconds later than createdAt and more truthful for it, but it is
+// per-process: an order read back from storage carries only the time it was created,
+// which by then is long enough ago for the difference not to matter.
+function orderDispatchedAt(order) {
+  return order.dispatchedAt || new Date(order.createdAt).getTime();
+}
 
 // Measured from the dispatch rather than from the dialog, which is not the same
 // moment: the dialog is also rebuilt around a payment recovered from the order
@@ -2318,7 +2377,7 @@ async function cancelPayment() {
   // on. A retry offered sooner than this gap is a retry offered too early.
   const rearmTimer = setTimeout(() => {
     if (!stillWaiting()) return;
-    if (!answered) $overlayMsg.textContent = 'No answer to the cancel yet — you can ask again.';
+    if (!answered) $overlayMsg.textContent = 'No response yet, you can retry or wait for 20s.';
     rearmCancel('Cancel again');
   }, CANCEL_REARM_MS);
 

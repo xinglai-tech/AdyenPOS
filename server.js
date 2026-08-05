@@ -1835,6 +1835,12 @@ app.post('/api/cancel', async (req, res) => {
       // Not a status. The cashier needs to see that a cancel is in flight, but the
       // sale is still live on the terminal until its PaymentResponse says otherwise.
       order.cancelRequested = true;
+      // When, so the order list can offer a second attempt rather than latching its
+      // cancel button off for good. In async mode that list is the only place a
+      // cancel can be pressed, and a first abort that arrived before the payment --
+      // which the terminal rejects with 'Message not Found' -- left nothing to press
+      // again, so the sale ran on until the terminal timed out minutes later.
+      order.cancelRequestedAt = Date.now();
       order.cancelResponse = data;
       orderChanged(order);
     }
