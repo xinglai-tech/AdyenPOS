@@ -26,7 +26,6 @@ const PORT = process.env.PORT || 3000;
 // Filled from storage at boot, before the server starts listening.
 let orders = [];
 let sseClients = [];
-const MAX_TERMINALS = 5;
 let terminals = process.env.ADYEN_TERMINAL_POIID
   ? process.env.ADYEN_TERMINAL_POIID.split(',').map(id => id.trim()).filter(Boolean)
       .map((id, i) => ({ poiId: id, active: i === 0 }))
@@ -465,7 +464,6 @@ app.get('/api/config', (req, res) => {
   res.json({
     poiId: getActivePoiId(),
     terminals,
-    maxTerminals: MAX_TERMINALS,
     saleId: process.env.ADYEN_SALE_ID || 'POSWebApp',
     merchantAccount: process.env.ADYEN_MERCHANT_ACCOUNT || '',
     printerModels: PRINTER_MODEL_PREFIXES,
@@ -519,10 +517,8 @@ app.post('/api/terminal/discover', async (_req, res) => {
     const data = await fetchConnectedTerminals({ force: true });
     const online = data.uniqueTerminalIds || [];
     const known = new Set(terminals.map(t => t.poiId));
-    const missing = online.filter(id => !known.has(id));
+    const added = online.filter(id => !known.has(id));
 
-    const room = Math.max(0, MAX_TERMINALS - terminals.length);
-    const added = missing.slice(0, room);
     for (const poiId of added) {
       terminals.push({ poiId, active: terminals.length === 0 });
     }
@@ -530,12 +526,7 @@ app.post('/api/terminal/discover', async (_req, res) => {
 
     res.json({
       added,
-      // Counted separately so the client can say the list is full rather than that
-      // there was nothing to add. Those are different things to someone looking at a
-      // terminal that is plainly online and wondering why it did not appear.
-      notAddedForSpace: missing.length - added.length,
       onlineCount: online.length,
-      maxTerminals: MAX_TERMINALS,
       terminals
     });
   } catch (err) {

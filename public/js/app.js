@@ -1812,13 +1812,6 @@ async function addTerminals() {
         `Another ${count === 1 ? 'terminal was' : `${count} terminals were`} added into the available list`,
         'success'
       );
-    } else if (data.notAddedForSpace > 0) {
-      // Online, missing from the list, and still not added: saying "no more
-      // available" here would be untrue and would hide the one thing that fixes it.
-      showToast(
-        `The list is full at ${data.maxTerminals}. Remove one to add another.`,
-        'warning'
-      );
     } else {
       showToast('No more terminal is available', 'info');
     }

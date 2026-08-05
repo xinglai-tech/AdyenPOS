@@ -35,7 +35,7 @@ model; before that nothing is assumed.
 | Button | What it does |
 | --- | --- |
 | **Check status** | Asks Adyen which terminals are online for this merchant account, and marks the list accordingly. Also used to notice a terminal has dropped off. |
-| **Add terminal** | Adds every terminal that is online for this merchant account and not already listed — nothing to type, since the merchant account decides what exists. Up to 5, held in memory only; seed `ADYEN_TERMINAL_POIID` to keep them across a restart. |
+| **Add terminal** | Adds every terminal that is online for this merchant account and not already listed — nothing to type, since the merchant account decides what exists. Held in memory only; seed `ADYEN_TERMINAL_POIID` to keep them across a restart. |
 | **Tap to Pay** | Board this Android device against the Adyen Payments app, pay with it, or revoke the instance. Android only, and the Payments app has to be installed. |
 | **API log** | Shows or hides the raw request/response panel. |
 | **Receipt** | Receipt logo and the QR code printed at the bottom. Both persist on the server. |
