@@ -399,7 +399,18 @@ diagnosticsChannel.subscribe('undici:request:create', ({ request }) => {
 const socketHistory = new WeakMap();
 
 diagnosticsChannel.subscribe('undici:client:connected', ({ socket }) => {
-  if (socket) socketHistory.set(socket, { openedAt: Date.now(), lastUsedAt: null });
+  if (!socket) return;
+  socketHistory.set(socket, {
+    openedAt: Date.now(),
+    lastUsedAt: null,
+    // Which address the name actually resolved to for this connection. Opening a
+    // fresh connection takes about 330ms whenever a payment goes through and about
+    // 20ms whenever one stalls -- the same handshake, fifteen times apart, so the
+    // two are unlikely to be reaching the same machine. This is what says so
+    // outright instead of leaving it to be argued from the timing.
+    remoteAddress: socket.remoteAddress || null,
+    remoteFamily: socket.remoteFamily || null
+  });
 });
 
 // The request going out on a socket. Everything before this is ours; everything
@@ -410,21 +421,30 @@ diagnosticsChannel.subscribe('undici:client:sendHeaders', ({ request, socket }) 
   ctx.sentAt = Date.now();
   const waitedMs = ctx.sentAt - ctx.startedAt;
 
-  // Absent only for a socket that opened before this subscriber did, which cannot
-  // happen for an Adyen call but is not worth guessing about if it ever does.
+  // Three answers, not two. A socket with no record here is not evidence of a fresh
+  // connection -- it is evidence that this tracing missed the moment it opened, and
+  // reporting that as 'new' would be exactly the confident wrong answer the marker
+  // exists to prevent. Socket identity does hold across connect and sendHeaders over
+  // TLS, so 'unknown' should not appear; if it does, nothing here can be trusted.
   const history = socket ? socketHistory.get(socket) : null;
-  const reused = !!(history && history.lastUsedAt !== null);
-  const idleMs = reused ? ctx.sentAt - history.lastUsedAt : null;
+  const connection = !history
+    ? 'unknown'
+    : (history.lastUsedAt === null ? 'new' : 'reused');
+  const idleMs = connection === 'reused' ? ctx.sentAt - history.lastUsedAt : null;
   if (history) history.lastUsedAt = ctx.sentAt;
+
+  const remoteAddress = history?.remoteAddress || null;
 
   // A silent call was never logged, so there is no entry to annotate.
   if (!ctx.silent) {
-    broadcastSSE('apiDispatched', { traceId: ctx.traceId, waitedMs, reused, idleMs });
+    broadcastSSE('apiDispatched', { traceId: ctx.traceId, waitedMs, connection, idleMs, remoteAddress });
   }
-  if (TRACE_CONNECTIONS) {
-    console.log(`[trace] ${ctx.label} — ${waitedMs}ms waiting, `
-      + (reused ? `REUSED a socket idle ${idleMs}ms` : 'on a new connection'));
-  }
+  // Always, not only under the trace flag: which address a stalled request went to
+  // is the thing being chased, and it is worth having in the server log for a run
+  // nobody thought to turn tracing on for.
+  console.log(`[dispatch] ${ctx.label} — ${waitedMs}ms, ${connection}`
+    + (idleMs === null ? '' : ` (idle ${idleMs}ms)`)
+    + ` -> ${remoteAddress || 'address unknown'} (${history?.remoteFamily || '?'})`);
 });
 
 // The rest is server-log only: useful while chasing a specific stall, too noisy to

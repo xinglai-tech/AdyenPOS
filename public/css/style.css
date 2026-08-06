@@ -1396,6 +1396,14 @@ html, body {
   color: var(--danger-ink);
   font-weight: 600;
 }
+/* The tracing could not tell whether this connection was new, so it says so rather
+   than picking the likelier of the two. Marked because an unreliable reading needs
+   more attention than either reliable one, not less. */
+.log-entry-dispatch.is-untracked {
+  color: var(--warning-ink);
+  font-weight: 600;
+  font-style: italic;
+}
 /* Right-aligned and out of the title, so a long label no longer has to share its
    line with a timestamp that is the same width on every row. */
 .log-entry-time {

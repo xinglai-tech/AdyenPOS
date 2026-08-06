@@ -276,8 +276,8 @@ function setupSSE() {
   // anything leaves it: undici may still be waiting for a connection. This marks the
   // moment it actually went out, on the entry it belongs to.
   es.addEventListener('apiDispatched', (e) => {
-    const { traceId, waitedMs, reused, idleMs } = JSON.parse(e.data);
-    markApiDispatched(traceId, waitedMs, reused, idleMs);
+    const { traceId, waitedMs, connection, idleMs, remoteAddress } = JSON.parse(e.data);
+    markApiDispatched(traceId, waitedMs, connection, idleMs, remoteAddress);
   });
 
   es.addEventListener('ordersCleared', () => {
@@ -2843,7 +2843,7 @@ const DISPATCH_SLOW_MS = 250;
 // Annotates a logged request with how long it waited to go out. Silent when the
 // entry is gone -- the log is capped, and a stall long enough to matter can outlive
 // its own entry on a busy terminal.
-function markApiDispatched(traceId, waitedMs, reused, idleMs) {
+function markApiDispatched(traceId, waitedMs, connection, idleMs, remoteAddress) {
   if (!traceId) return;
   const entry = $apiResponse.querySelector(`.log-entry[data-trace-id="${CSS.escape(traceId)}"]`);
   if (!entry || entry.querySelector('.log-entry-dispatch')) return;
@@ -2856,14 +2856,27 @@ function markApiDispatched(traceId, waitedMs, reused, idleMs) {
   // healthy connection is what sent this investigation the wrong way for an
   // afternoon: it meant the opposite, a socket the pool still believed in.
   const seconds = idleMs >= 1000 ? `${Math.round(idleMs / 1000)}s` : `${idleMs}ms`;
-  el.textContent = reused ? `sent +${waitedMs}ms · reused ${seconds}` : `sent +${waitedMs}ms · new`;
-  if (reused) el.classList.add('is-reused');
+  const state = connection === 'reused' ? `reused ${seconds}` : connection;
+  // The address is on the line rather than in a tooltip because it is the thing
+  // being compared between a payment that went through and one that stalled, and
+  // those comparisons are being made from screenshots.
+  el.textContent = `sent +${waitedMs}ms · ${state}`
+    + (remoteAddress ? ` · ${remoteAddress}` : '');
+  if (connection === 'reused') el.classList.add('is-reused');
+  // 'unknown' means the socket was never seen to connect, so 'new' could not be
+  // claimed honestly. Marked, because a reading nobody can trust is worth more
+  // attention than either of the two that can be.
+  if (connection === 'unknown') el.classList.add('is-untracked');
 
   // Spelled out, because the number alone invites the wrong reading: it is the wait
   // inside this process, and says nothing about when Adyen or the terminal acted.
-  el.title = reused
-    ? `Waited ${waitedMs}ms, then went out on a pooled connection that had been idle ${idleMs}ms`
-    : `Waited ${waitedMs}ms for a new connection before the request left the server`;
+  const how = {
+    reused: `then went out on a pooled connection idle ${idleMs}ms`,
+    new: 'for a new connection before the request left the server',
+    unknown: 'then went out on a socket this log never saw open, so it cannot say whether it was new'
+  }[connection] || '';
+  el.title = `Waited ${waitedMs}ms ${how}`
+    + (remoteAddress ? `, to ${remoteAddress}` : '');
   entry.querySelector('.log-entry-time')?.before(el);
 }
 

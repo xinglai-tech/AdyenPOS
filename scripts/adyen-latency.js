@@ -79,18 +79,26 @@ const serviceId = () => randomUUID().replace(/-/g, '').slice(0, 10);
 // runs on the socket's, which belongs to whichever request opened the connection.
 const ctxStore = new AsyncLocalStorage();
 const traced = new WeakMap();
+const socketAddress = new WeakMap();
 let connectionsOpened = 0;
 
 diagnosticsChannel.subscribe('undici:request:create', ({ request }) => {
   const ctx = ctxStore.getStore();
   if (ctx) traced.set(request, ctx);
 });
-diagnosticsChannel.subscribe('undici:client:sendHeaders', ({ request }) => {
+// Which address the name resolved to for this connection. Opening one takes about
+// 330ms whenever a payment goes through and about 20ms whenever one stalls, and the
+// same handshake being fifteen times apart is easier to explain by the two reaching
+// different machines than by either being slow.
+diagnosticsChannel.subscribe('undici:client:sendHeaders', ({ request, socket }) => {
   const ctx = traced.get(request);
-  if (ctx) ctx.sentAt = Date.now();
+  if (!ctx) return;
+  ctx.sentAt = Date.now();
+  ctx.remoteAddress = (socket && socketAddress.get(socket)) || null;
 });
-diagnosticsChannel.subscribe('undici:client:connected', () => {
+diagnosticsChannel.subscribe('undici:client:connected', ({ socket }) => {
   connectionsOpened++;
+  if (socket) socketAddress.set(socket, socket.remoteAddress || null);
 });
 
 async function call(body, timeoutMs) {
@@ -126,7 +134,8 @@ async function call(body, timeoutMs) {
     totalMs: doneAt - ctx.startedAt,
     // Approximate: connections are not published per request, so this says a
     // connection opened around the same time, not that this request caused it.
-    newConnection: connectionsOpened > ctx.connectionsAtStart
+    newConnection: connectionsOpened > ctx.connectionsAtStart,
+    remoteAddress: ctx.remoteAddress || null
   };
 }
 
@@ -227,10 +236,11 @@ async function main() {
   console.log(`Terminal API latency — ${RUNS} rounds against ${POI}`);
   console.log(`${BASE}  ${CURRENCY} ${AMOUNT.toFixed(2)}  cancel after ${ARM_MS}ms  ${COOLDOWN_MS}ms between rounds`);
   console.log('Each round rings up a real transaction and cancels it.\n');
-  console.log('  #   payment: conn    wire   total   outcome        abort: conn    wire   total   outcome');
-  console.log('  ' + '-'.repeat(96));
+  console.log('  #   payment: conn    wire   total   address          outcome        abort: conn    wire   address');
+  console.log('  ' + '-'.repeat(112));
 
   const stats = { paymentConn: [], abortConn: [], abortWire: [], paymentTotal: [] };
+  const rowsSeen = [];
   let consecutiveRefusals = 0;
   let stopped = null;
 
@@ -249,12 +259,13 @@ async function main() {
     const payResult = pay.error || paymentOutcome(pay.body);
     const abortResult = abort.error || abortOutcome(abort.body);
 
-    const row = (label, r) => `${String(r.connMs).padStart(6)}${r.newConnection ? '*' : ' '}`
+    const row = r => `${String(r.connMs).padStart(6)}${r.newConnection ? '*' : ' '}`
       + `${String(r.wireMs).padStart(7)} ${String(r.totalMs).padStart(7)}`;
+    const addr = r => (r.remoteAddress || '?').padEnd(15).slice(0, 15);
 
     console.log(
-      `  ${String(i).padStart(2)}         ${row('payment', pay)}   ${payResult.padEnd(14).slice(0, 14)}`
-      + `        ${row('abort', abort)}   ${abortResult}`
+      `  ${String(i).padStart(2)}         ${row(pay)}   ${addr(pay)}  ${payResult.padEnd(14).slice(0, 14)}`
+      + `      ${String(abort.connMs).padStart(6)} ${String(abort.wireMs).padStart(7)}   ${addr(abort)} ${abortResult}`
     );
 
     if (!pay.error) {
@@ -265,6 +276,7 @@ async function main() {
       stats.abortConn.push(abort.connMs);
       stats.abortWire.push(abort.wireMs);
     }
+    rowsSeen.push(pay.remoteAddress, abort.remoteAddress);
 
     // A payment that went through means the abort lost the race and the shopper was
     // charged. Continuing would charge fourteen more.
@@ -291,6 +303,13 @@ async function main() {
   console.log('  ' + summarise('payment total', stats.paymentTotal));
   console.log(`\n  ${connectionsOpened} connection(s) opened for ${stats.paymentConn.length + stats.abortConn.length} request(s). `
     + `A * marks a request that coincided with a new one.`);
+
+  const addresses = [...new Set(rowsSeen.filter(Boolean))];
+  console.log(`\n  addresses used: ${addresses.length ? addresses.join(', ') : 'none recorded'}`);
+  if (addresses.length > 1) {
+    console.log('  More than one. Line up the slow rounds against the address column above:');
+    console.log('  a stall that only ever happens on one of them is the answer.');
+  }
 
   console.log('\n  conn  = waiting for a connection in this process, before any bytes went out.');
   console.log('  wire  = from the request leaving to the answer arriving. Adyen and the terminal.');
