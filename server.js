@@ -5,6 +5,8 @@ const https = require('https');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const diagnosticsChannel = require('diagnostics_channel');
+const { AsyncLocalStorage } = require('async_hooks');
 const { v4: uuidv4 } = require('uuid');
 const nexoCrypto = require('./nexoCrypto');
 const { readInputResult, readEnableServiceResult } = require('./nexoParse');
@@ -362,36 +364,105 @@ const ADYEN_LOOKUP_TIMEOUT_MS = 10000;
 // the cashier staring at a spinner.
 const ADYEN_UNATTENDED_TIMEOUT_MS = Number(process.env.ADYEN_UNATTENDED_TIMEOUT_MS) || 10000;
 
+// --------------- Dispatch tracing ---------------
+// The apiRequest mirror below is broadcast before the fetch, so it marks the moment
+// we decided to send -- not the moment anything left this process. Between the two
+// sits undici's connection pool, and a request waiting there for a connection reads,
+// in the log, exactly like one Adyen is sitting on. Both look like a payment that
+// never arrived; they are fixed in completely different places. So the log records
+// the dispatch as its own event, and the two waits can be told apart without adding
+// anything to the request itself.
+//
+// Attribution is by the request object, not by the async context the event arrives
+// in. The context is read once, at request:create, which undici publishes
+// synchronously inside the fetch call; every later event runs on the socket's
+// context, which belongs to whichever request opened the connection. Reading the
+// store there was measurably wrong -- a context-less call by the storage SDK came
+// back attributed to a payment.
+const requestContext = new AsyncLocalStorage();
+// Weak, so a request that never completes cannot pin its entry here for good.
+const tracedRequests = new WeakMap();
+const TRACE_CONNECTIONS = process.env.ADYEN_TRACE_CONNECTIONS === 'true';
+
+diagnosticsChannel.subscribe('undici:request:create', ({ request }) => {
+  // Absent for anything not sent by adyenRequest -- the storage SDK, chiefly --
+  // which is what keeps those out of the API log.
+  const ctx = requestContext.getStore();
+  if (ctx) tracedRequests.set(request, ctx);
+});
+
+// The request going out on a socket. Everything before this is ours; everything
+// after it is Adyen's and the terminal's.
+diagnosticsChannel.subscribe('undici:client:sendHeaders', ({ request }) => {
+  const ctx = tracedRequests.get(request);
+  if (!ctx) return;
+  ctx.sentAt = Date.now();
+  const waitedMs = ctx.sentAt - ctx.startedAt;
+  // A silent call was never logged, so there is no entry to annotate.
+  if (!ctx.silent) broadcastSSE('apiDispatched', { traceId: ctx.traceId, waitedMs });
+  if (TRACE_CONNECTIONS) {
+    console.log(`[trace] ${ctx.label} — ${waitedMs}ms waiting for a connection`);
+  }
+});
+
+// The rest is server-log only: useful while chasing a specific stall, too noisy to
+// leave on, and it says nothing the API log does not already pair up.
+if (TRACE_CONNECTIONS) {
+  diagnosticsChannel.subscribe('undici:request:headers', ({ request, response }) => {
+    const ctx = tracedRequests.get(request);
+    if (!ctx) return;
+    const now = Date.now();
+    // Falls back to startedAt when sendHeaders never fired, so a request that failed
+    // before reaching a socket still reports something rather than NaN.
+    console.log(`[trace] ${ctx.label} — ${response.statusCode} after ${now - (ctx.sentAt || ctx.startedAt)}ms on the wire, ${now - ctx.startedAt}ms in total`);
+  });
+
+  // A connection opening next to a slow request is the tell: it means the pool had
+  // nothing reusable, which is the state that precedes a stall on a dead one.
+  diagnosticsChannel.subscribe('undici:client:connected', ({ connectParams }) => {
+    console.log(`[trace] opened a connection to ${connectParams?.host || 'unknown host'}`);
+  });
+
+  console.log('[trace] connection tracing on (ADYEN_TRACE_CONNECTIONS)');
+}
+
 async function adyenRequest(endpoint, body, opts = {}) {
+  // Declared by the caller rather than read off the MessageCategory. The category
+  // cannot name these on its own: a refund and a sale are both 'Payment', and
+  // cancelling a sale and cancelling a card read are both 'Abort'. The client logs
+  // the matching response under the same string, so the two halves pair up.
+  const label = opts.label || body?.SaleToPOIRequest?.MessageHeader?.MessageCategory || '';
+  // Ties this call's log entry to the dispatch event that follows it. Names the
+  // entry rather than the request: nothing about it goes to Adyen.
+  const traceId = uuidv4().replace(/-/g, '').slice(0, 10);
+
   // Mirror the outgoing request to the API log. Done here rather than at each call
   // site because every Terminal API call funnels through this function, so one
   // broadcast covers payments, card acquisition, printing, aborts and the rest.
   // `silent` is for housekeeping calls the user never asked for, which would
   // otherwise bury the request they did ask for.
   if (!opts.silent) {
-    broadcastSSE('apiRequest', {
-      // Declared by the caller rather than read off the MessageCategory. The category
-      // cannot name these on its own: a refund and a sale are both 'Payment', and
-      // cancelling a sale and cancelling a card read are both 'Abort'. The client
-      // logs the matching response under the same string, so the two halves pair up.
-      label: opts.label || body?.SaleToPOIRequest?.MessageHeader?.MessageCategory || '',
-      endpoint,
-      payload: body
-    });
+    broadcastSSE('apiRequest', { label, endpoint, payload: body, traceId });
   }
 
   const timeoutMs = opts.timeoutMs || ADYEN_TIMEOUT_MS;
   let res;
   try {
-    res = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-API-key': process.env.ADYEN_API_KEY || ''
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs)
-    });
+    // The store the dispatch tracing above reads. startedAt is taken here, inside
+    // the same call, so what it measures is this request's own wait and not any
+    // preparation that happened before it.
+    res = await requestContext.run(
+      { traceId, label, silent: !!opts.silent, startedAt: Date.now() },
+      () => fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-API-key': process.env.ADYEN_API_KEY || ''
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs)
+      })
+    );
   } catch (err) {
     // A timeout means the outcome is unknown, not that the request failed, so say
     // so plainly: callers must not record it as a decline. `code` travels out to the

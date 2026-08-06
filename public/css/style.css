@@ -1370,6 +1370,23 @@ html, body {
   font-weight: 600;
   color: var(--text);
 }
+/* When the request actually left the server, which is not when it was logged. Sits
+   next to the timestamp because it qualifies it. Muted at the usual few
+   milliseconds: it is there to be found when a payment stalls, not to be read on
+   every row. */
+.log-entry-dispatch {
+  flex: none;
+  font-size: .62rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+/* A request held back long enough to explain a terminal that never lit up. The one
+   case anybody opens this log for, so it stops being muted. The ink variant, not
+   --warning: this is small text on white, where the base orange is well under 4.5:1. */
+.log-entry-dispatch.is-slow {
+  color: var(--warning-ink);
+  font-weight: 600;
+}
 /* Right-aligned and out of the title, so a long label no longer has to share its
    line with a timestamp that is the same width on every row. */
 .log-entry-time {
@@ -1734,6 +1751,20 @@ html, body {
   z-index: 1300;
   transition: opacity .25s ease;
 }
+
+/* The payment dialog alone, by id, so every other modal keeps the full treatment:
+   those are short interactions with nothing behind them worth watching. This one
+   stands for as long as a cardholder takes, and the API log behind it is where the
+   progress of that same payment is read -- blurring it out left the cashier watching
+   a spinner with the answer hidden one layer below.
+   Still modal. The page shows through but does not take clicks, because ringing up a
+   second sale while this one is live is what the dialog is here to prevent. */
+#payment-overlay {
+  background: rgba(0,0,0,.22);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 .hidden { display: none !important; }
 
 .overlay-content {

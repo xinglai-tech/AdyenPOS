@@ -262,14 +262,22 @@ function setupSSE() {
   // what went out and not only what came back. It arrives while the call is still
   // in flight, so it lands just below its own response once that is logged.
   es.addEventListener('apiRequest', (e) => {
-    const { label, endpoint, payload } = JSON.parse(e.data);
+    const { label, endpoint, payload, traceId } = JSON.parse(e.data);
     // The server names each call, and the response below is logged under the same
     // name, so a request and its answer read as a pair. The endpoint used to be
     // appended -- "Payment · sync" against a response titled "Payment (Sync)" --
     // but that suffix is a URL path segment, it is 'sync' for every call except an
     // async payment, and it made the two halves look unrelated.
     const route = String(endpoint || '').split('/').pop();
-    showApiResponse(label || route || 'Terminal API', payload, 'request');
+    showApiResponse(label || route || 'Terminal API', payload, 'request', traceId);
+  });
+
+  // The entry above is written when the server decides to send, which is not when
+  // anything leaves it: undici may still be waiting for a connection. This marks the
+  // moment it actually went out, on the entry it belongs to.
+  es.addEventListener('apiDispatched', (e) => {
+    const { traceId, waitedMs } = JSON.parse(e.data);
+    markApiDispatched(traceId, waitedMs);
   });
 
   es.addEventListener('ordersCleared', () => {
@@ -2827,7 +2835,30 @@ function cancelTitle(adyenResponse) {
   return adyenResponse?.raw === 'ok' ? 'Cancel received' : 'Cancel';
 }
 
-function showApiResponse(label, data, direction = 'response') {
+// Anything at all here means the request was held back rather than sent straight
+// out. A connection is normally reused in single digits of milliseconds, so this is
+// low enough to catch a stall while staying above ordinary jitter.
+const DISPATCH_SLOW_MS = 250;
+
+// Annotates a logged request with how long it waited to go out. Silent when the
+// entry is gone -- the log is capped, and a stall long enough to matter can outlive
+// its own entry on a busy terminal.
+function markApiDispatched(traceId, waitedMs) {
+  if (!traceId) return;
+  const entry = $apiResponse.querySelector(`.log-entry[data-trace-id="${CSS.escape(traceId)}"]`);
+  if (!entry || entry.querySelector('.log-entry-dispatch')) return;
+
+  const el = document.createElement('span');
+  el.className = 'log-entry-dispatch';
+  if (waitedMs >= DISPATCH_SLOW_MS) el.classList.add('is-slow');
+  el.textContent = `sent +${waitedMs}ms`;
+  // Spelled out, because the number alone invites the wrong reading: it is the wait
+  // inside this process, and says nothing about when Adyen or the terminal acted.
+  el.title = `Waited ${waitedMs}ms for a connection before the request left the server`;
+  entry.querySelector('.log-entry-time')?.before(el);
+}
+
+function showApiResponse(label, data, direction = 'response', traceId = null) {
   const time = new Date().toLocaleTimeString();
   const json = JSON.stringify(data, summariseReceipts, 2);
 
@@ -2841,6 +2872,8 @@ function showApiResponse(label, data, direction = 'response') {
   // Collapsed on arrival. Entries land unprompted, several per payment, and an
   // expanded payload is long enough to push whatever was being read off screen.
   entry.className = `log-entry log-entry-${isRequest ? 'request' : 'response'} is-collapsed`;
+  // What a later apiDispatched event finds this entry by.
+  if (traceId) entry.dataset.traceId = traceId;
 
   const header = document.createElement('div');
   header.className = 'log-entry-header';
