@@ -435,9 +435,12 @@ diagnosticsChannel.subscribe('undici:client:sendHeaders', ({ request, socket }) 
 
   const remoteAddress = history?.remoteAddress || null;
 
-  // A silent call was never logged, so there is no entry to annotate.
+  // A silent call was never logged, so there is no entry to annotate. Only the wait
+  // goes to the page: the connection state and the address were there while the
+  // stalls were being chased and now read the same on every row, so they stayed here
+  // and stopped being broadcast.
   if (!ctx.silent) {
-    broadcastSSE('apiDispatched', { traceId: ctx.traceId, waitedMs, connection, idleMs, remoteAddress });
+    broadcastSSE('apiDispatched', { traceId: ctx.traceId, waitedMs });
   }
   // Always, not only under the trace flag: which address a stalled request went to
   // is the thing being chased, and it is worth having in the server log for a run

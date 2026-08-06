@@ -276,8 +276,8 @@ function setupSSE() {
   // anything leaves it: undici may still be waiting for a connection. This marks the
   // moment it actually went out, on the entry it belongs to.
   es.addEventListener('apiDispatched', (e) => {
-    const { traceId, waitedMs, connection, idleMs, remoteAddress } = JSON.parse(e.data);
-    markApiDispatched(traceId, waitedMs, connection, idleMs, remoteAddress);
+    const { traceId, waitedMs } = JSON.parse(e.data);
+    markApiDispatched(traceId, waitedMs);
   });
 
   es.addEventListener('ordersCleared', () => {
@@ -2853,15 +2853,25 @@ function cancelTitle(adyenResponse) {
   return adyenResponse?.raw === 'ok' ? 'Cancel received' : 'Cancel';
 }
 
-// Anything at all here means the request was held back rather than sent straight
-// out. A connection is normally reused in single digits of milliseconds, so this is
-// low enough to catch a stall while staying above ordinary jitter.
-const DISPATCH_SLOW_MS = 250;
+// Every Adyen call opens its own connection, so an ordinary dispatch already carries
+// a TCP and TLS handshake with it: about 300-400ms to the addresses this deployment
+// is pinned to, which are the far ones. This was 250ms, set when the near addresses
+// were still in play and a handshake cost single digits -- against the pinned ones it
+// would have marked every row alike and meant nothing. A second is comfortably clear
+// of a normal handshake and still well under the stalls worth seeing.
+const DISPATCH_SLOW_MS = 1000;
 
 // Annotates a logged request with how long it waited to go out. Silent when the
 // entry is gone -- the log is capped, and a stall long enough to matter can outlive
 // its own entry on a busy terminal.
-function markApiDispatched(traceId, waitedMs, connection, idleMs, remoteAddress) {
+//
+// This used to carry the address the call went to and whether the connection was new.
+// Both were put here to catch one thing -- a block of Adyen addresses delivering to
+// the terminal twenty seconds late -- and now that the deployment pins the hostname
+// away from that block they report the same answer on every row, which is a cashier
+// reading diagnostics that no longer diagnose. The server log still prints both on
+// every dispatch, and that is where to look if the stalls come back.
+function markApiDispatched(traceId, waitedMs) {
   if (!traceId) return;
   const entry = $apiResponse.querySelector(`.log-entry[data-trace-id="${CSS.escape(traceId)}"]`);
   if (!entry || entry.querySelector('.log-entry-dispatch')) return;
@@ -2869,32 +2879,10 @@ function markApiDispatched(traceId, waitedMs, connection, idleMs, remoteAddress)
   const el = document.createElement('span');
   el.className = 'log-entry-dispatch';
   if (waitedMs >= DISPATCH_SLOW_MS) el.classList.add('is-slow');
-
-  // Stated rather than left to be inferred from the wait. Reading a small wait as a
-  // healthy connection is what sent this investigation the wrong way for an
-  // afternoon: it meant the opposite, a socket the pool still believed in.
-  const seconds = idleMs >= 1000 ? `${Math.round(idleMs / 1000)}s` : `${idleMs}ms`;
-  const state = connection === 'reused' ? `reused ${seconds}` : connection;
-  // The address is on the line rather than in a tooltip because it is the thing
-  // being compared between a payment that went through and one that stalled, and
-  // those comparisons are being made from screenshots.
-  el.textContent = `sent +${waitedMs}ms · ${state}`
-    + (remoteAddress ? ` · ${remoteAddress}` : '');
-  if (connection === 'reused') el.classList.add('is-reused');
-  // 'unknown' means the socket was never seen to connect, so 'new' could not be
-  // claimed honestly. Marked, because a reading nobody can trust is worth more
-  // attention than either of the two that can be.
-  if (connection === 'unknown') el.classList.add('is-untracked');
-
+  el.textContent = `sent +${waitedMs}ms`;
   // Spelled out, because the number alone invites the wrong reading: it is the wait
   // inside this process, and says nothing about when Adyen or the terminal acted.
-  const how = {
-    reused: `then went out on a pooled connection idle ${idleMs}ms`,
-    new: 'for a new connection before the request left the server',
-    unknown: 'then went out on a socket this log never saw open, so it cannot say whether it was new'
-  }[connection] || '';
-  el.title = `Waited ${waitedMs}ms ${how}`
-    + (remoteAddress ? `, to ${remoteAddress}` : '');
+  el.title = `Waited ${waitedMs}ms for a connection before the request left the server`;
   entry.querySelector('.log-entry-time')?.before(el);
 }
 
