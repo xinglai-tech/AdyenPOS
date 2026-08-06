@@ -54,15 +54,20 @@ function planCancel(order) {
 // that worked.
 //
 // The loop is gone because its timing was guesswork against a figure it did not
-// know. Adyen's answer to a single abort has since been measured at 19894ms with
-// nothing at all spent in this server, and a second press -- or simply waiting --
-// settles the sale, which says the early abort was not discarded but held. A repeat
-// sent 2s after the first therefore went out an order of magnitude too early to
-// cover the window it existed for; by then the sale had usually finished and the
-// terminal answered with a Reject naming a ServiceID it no longer had. The retry
-// belongs to whoever can see the sale is still running -- the cashier, whose cancel
-// button is re-armed after 3s rather than on an answer that may be twenty seconds
-// out.
+// know. Adyen's answer to a single abort was measured at 19894ms with nothing at all
+// spent in this server, and a second press -- or simply waiting -- settles the sale,
+// which says the early abort was not discarded but held. A repeat sent 2s after the
+// first therefore went out an order of magnitude too early to cover the window it
+// existed for; by then the sale had usually finished and the terminal answered with
+// a Reject naming a ServiceID it no longer had.
+//
+// That 19894ms has since been traced to a routing fault rather than to anything
+// about aborts: one block of Adyen's addresses was delivering to the terminal twenty
+// seconds late, and the deployment now pins the hostname away from it. The
+// conclusion survives the correction, and is strengthened by it -- a timer set here
+// would have been set against a figure that turned out to be measuring something
+// else entirely, which is the guesswork this removal was about. The retry belongs to
+// whoever can see the sale is still running, and that is the cashier.
 
 // How long to wait for a payment to be recorded as sent before giving up and
 // aborting anyway. Generous rather than tuned: the wait it covers is now only a

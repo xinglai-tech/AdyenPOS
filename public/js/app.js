@@ -2154,7 +2154,7 @@ async function queryOrderStatus(serviceId, btnEl) {
 // ====================== Cancel Order ======================
 async function cancelOrder(serviceId, btnEl) {
   // Recorded at the press rather than left to the server's answer, which reports the
-  // cancel only once its abort has been answered -- up to twenty seconds. Any redraw
+  // cancel only once its abort has been answered and so can lag the press. Any redraw
   // in between, and the list is redrawn on every order update, would otherwise put an
   // enabled button straight back under the cashier's finger.
   (state._cancelPressedAt ||= {})[serviceId] = Date.now();
@@ -2261,14 +2261,18 @@ async function checkTransactionStatus() {
 }
 
 // ====================== Cancel Payment ======================
-// An AbortRequest is answered by Adyen, and that answer has been seen to take tens
-// of seconds. Nothing is wrong when it does: the abort is best-effort and only the
-// PaymentResponse settles the sale. So the dialog stops waiting on it in two steps.
+// An AbortRequest is answered by Adyen, and that answer was for a while taking tens
+// of seconds -- since traced to the route those calls were taking and pinned away
+// from. The two steps below were built for that and are kept anyway, because the
+// reason they work does not depend on it: the abort is best-effort, only the
+// PaymentResponse settles the sale, and so its answer is not worth waiting on
+// however fast it comes back.
 //
 // First, the button. The case a second press exists for is an abort that reached a
 // terminal not yet able to act on one, which is a window measured in the first
-// seconds of the sale -- so waiting on an answer that may be twenty seconds out
-// would offer the retry long after it could have helped.
+// seconds of the sale -- so gating the retry on the abort's own answer would offer it
+// long after it could have helped, and that answer does not report whether the
+// terminal acted in any case.
 const CANCEL_REARM_MS = 3000;
 
 // And before either of them, the wait for the button to exist at all. An abort that
@@ -2279,19 +2283,33 @@ const CANCEL_REARM_MS = 3000;
 // to offer the button until the payment has had time to land says the same thing
 // without pretending to have done something.
 //
-// Two seconds was not enough in practice: a cancel pressed the moment it came within
-// reach still beat its payment to the terminal.
-const CANCEL_ARM_MS = 2500;
+// This was raised to 2500 once, after cancels kept beating their payments to the
+// terminal however long the wait was made. That was a misreading: those payments
+// were stalling around twenty seconds inside Adyen, on a route that no wait short
+// enough to be usable would have covered. The route is pinned now and the stalls
+// are gone with it, so the number can go back to being set by what the trip costs
+// -- about 330ms to get the request onto the wire, and another hundred or so for it
+// to arrive. A second leaves roughly half of itself spare.
+//
+// Erring short is also cheaper than it was: a cancel that arrives too early now
+// comes back and the button offers itself again, where before it left the cashier
+// waiting on a terminal that had quietly carried on with the sale.
+const CANCEL_ARM_MS = 1000;
 
 // An async payment can also never be acknowledged -- the server it was in flight on
 // restarted, say, leaving an order read back from storage as pending with nothing
 // recorded against it. Waiting on that acknowledgement forever would put the cancel
 // button permanently out of reach, which is the lock this whole path exists to
-// avoid, so the wait for one is capped. Generous, because it is a last resort rather
-// than the normal path and pre-empting a real acknowledgement would defeat the gate
-// below: an abort's answer on the same endpoint has been seen to take twenty seconds,
-// so an acknowledgement is not assumed to be quick.
-const CANCEL_ACK_WAIT_MS = 30000;
+// avoid, so the wait for one is capped.
+//
+// This cap was thirty seconds, on the same misreading that inflated the wait above:
+// an acknowledgement was taken to be capable of needing twenty. It is not -- that
+// delay was the route, and the route is pinned. Five seconds is already far longer
+// than an acknowledgement needs, and the only case this cap really catches is a live
+// order whose acknowledgement is never coming, where waiting longer prolongs a lock
+// for nothing. An order recovered from storage is past any cap by the time it is
+// drawn, so it is not this that frees that one.
+const CANCEL_ACK_WAIT_MS = 5000;
 
 // How much longer the order list has to hold a cancel back, in ms; 0 or less means
 // it can be offered. Three waits, and which one applies is not a matter of taste:
@@ -2421,7 +2439,7 @@ async function cancelPayment() {
   // on. A retry offered sooner than this gap is a retry offered too early.
   const rearmTimer = setTimeout(() => {
     if (!stillWaiting()) return;
-    if (!answered) $overlayMsg.textContent = 'No response yet, you can retry or wait for 20s.';
+    if (!answered) $overlayMsg.textContent = 'No answer to the cancel yet. Ask again, or give it a moment.';
     rearmCancel('Cancel again');
   }, CANCEL_REARM_MS);
 
@@ -2429,8 +2447,8 @@ async function cancelPayment() {
   // sale ending: the terminal may take a hundred and fifty seconds to produce the
   // PaymentResponse that does, and until this fires the dialog holds the till with
   // no way out of it. Clearing this on any answer at all -- which is what used to
-  // happen -- only looked harmless while answers took twenty seconds and the timer
-  // had always already fired.
+  // happen -- only looked harmless back when answers were taking twenty seconds and
+  // this timer had therefore always already fired.
   setTimeout(() => {
     if (!stillWaiting()) return;
     $overlayMsg.textContent = answered

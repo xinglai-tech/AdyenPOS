@@ -442,6 +442,15 @@ diagnosticsChannel.subscribe('undici:client:sendHeaders', ({ request, socket }) 
   // Always, not only under the trace flag: which address a stalled request went to
   // is the thing being chased, and it is worth having in the server log for a run
   // nobody thought to turn tracing on for.
+  //
+  // On the deployed instance the answer is fixed, and not by anything in this
+  // repository: terminal-api-test.adyen.com resolves to six addresses in two blocks,
+  // one of which delivered payments to the terminal twenty seconds late, so the App
+  // Service startup command writes the three working ones into /etc/hosts. If this
+  // line starts reporting an address outside 147.12.x.x, that pin is gone -- the
+  // container was restarted without the startup command, or the addresses moved --
+  // and the twenty-second stalls come back with it. Undoing the pin is a matter of
+  // clearing that field; the fault itself is Adyen's and is not fixed here.
   console.log(`[dispatch] ${ctx.label} — ${waitedMs}ms, ${connection}`
     + (idleMs === null ? '' : ` (idle ${idleMs}ms)`)
     + ` -> ${remoteAddress || 'address unknown'} (${history?.remoteFamily || '?'})`);
@@ -1850,11 +1859,13 @@ app.post('/api/payment', async (req, res) => {
       // and an abort sent first is rejected with 'Message not Found' while the sale
       // runs on.
       //
-      // How long this takes has not been measured; an abort's answer on the same
-      // endpoint has been seen to take twenty seconds, which is the reason for not
-      // assuming this one is quick. Recording it is what will tell us: the gap to
-      // dispatchedAt is on every async order from here on.
+      // The twenty seconds this used to take turned out to be a routing fault rather
+      // than the cost of the call, so the gap is printed: it is the one measurement of
+      // how long Adyen needs to accept a payment, and the wait the cancel button keeps
+      // in sync mode -- where there is no acknowledgement to wait on -- is guessing at
+      // the same number. If these come back well above a second, that guess is wrong.
       order.acknowledgedAt = Date.now();
+      console.log(`[async ack] ${transactionId} — ${order.acknowledgedAt - order.dispatchedAt}ms`);
       orderChanged(order);
       return res.json({ orderId: transactionId, serviceId: header.ServiceID, status: 'submitted' });
     }
