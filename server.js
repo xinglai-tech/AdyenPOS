@@ -457,7 +457,22 @@ async function adyenRequest(endpoint, body, opts = {}) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-API-key': process.env.ADYEN_API_KEY || ''
+          'x-API-key': process.env.ADYEN_API_KEY || '',
+          // Opts out of connection reuse, and the dispatch marker above is what
+          // asked for it. A stalled payment reported 22ms; a working one about
+          // 300ms. That is backwards from how it reads: 300ms is a TLS handshake
+          // to Adyen, and 22ms is a write into a socket that was already open.
+          //
+          // undici will hold an idle socket for at least a minute -- measured, not
+          // assumed -- while Azure App Service drops idle outbound flows at around
+          // four minutes and sends nothing to say so. In the window between, the
+          // pool hands out a connection the network has already forgotten: the
+          // request leaves in milliseconds and is never delivered, which is why
+          // the terminal stayed dark and then lit up all at once much later. It
+          // never reproduced locally, where nothing sits in that path.
+          //
+          // The cost is a handshake on every call. A payment is worth 300ms.
+          'Connection': 'close'
         },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(timeoutMs)

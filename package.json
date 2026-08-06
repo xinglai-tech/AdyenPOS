@@ -7,6 +7,7 @@
     "start": "node server.js",
     "dev": "node server.js",
     "certs": "bash scripts/make-dev-certs.sh",
+    "latency": "node scripts/adyen-latency.js",
     "test": "node --test \"test/*.test.js\""
   },
   "engines": {
