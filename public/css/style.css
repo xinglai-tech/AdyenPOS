@@ -710,14 +710,22 @@ html, body {
   transform: translateY(0);
   pointer-events: auto;
 }
+/* Sized for a finger rather than a cursor. The 8px padding this replaces made a
+   31px row, which is a mouse measurement, and the row is the one place in the app
+   where a near miss is punished: a press landing outside an option counts as an
+   outside press, and an outside press closes the menu. Stated unconditionally and
+   not under (pointer: coarse), because the touchscreen this is used on hangs off a
+   Mac mini and reaches the browser as a mouse -- the query would not match the one
+   machine that needs it. */
 .terminal-option {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 8px 9px;
+  min-height: 44px;
+  padding: 10px 11px;
   font-family: inherit;
-  font-size: .78rem;
+  font-size: .8rem;
   color: var(--text);
   text-align: left;
   background: none;
@@ -1993,9 +2001,14 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  /* Narrow, centred column: full-width rows looked stretched in the modal. The
-     percentage is tuned so the longest label still fits on one line. */
-  width: 72%;
+  /* Narrow, centred column: full-width rows looked stretched in the modal. This was
+     a hand-tuned 72%, which is a measurement of the labels that existed when it was
+     written -- 'Card not presented' was added afterwards and had been overflowing its
+     button ever since, because the rows are nowrap and a flex item does not shrink
+     below its text. Sizing to content keeps the column narrow without anybody having
+     to re-measure it the next time a payment method is added. */
+  width: fit-content;
+  max-width: 100%;
   margin: 22px auto;
 }
 .paymethod-btn {
@@ -2183,6 +2196,10 @@ html, body {
   /* Restated because the .overlay-content rule above has the same specificity but
      comes later in the file, so it would otherwise win and widen this modal. */
   .modal-paymethod { max-width: 270px; padding: 26px 18px; }
+  /* Six methods rather than four, on the screen with the least room for them. The
+     rows keep their own height -- they are touch targets -- so the space comes out
+     of the gaps between them. */
+  .paymethod-grid { gap: 12px; margin: 18px auto; }
   .modal-userdata { padding: 22px 18px; }
   /* Narrower label column so the value still has room on a phone. */
   .userdata-field { grid-template-columns: 3.6rem 1fr; }

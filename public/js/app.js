@@ -960,6 +960,9 @@ function formatBrand(brand) {
     eftpos_australia: 'eftpos', interac: 'Interac', cartebancaire: 'Carte Bancaire',
     bcmc: 'Bancontact', girocard: 'Girocard', alipay: 'Alipay', wechatpay: 'WeChat Pay',
     swish: 'Swish', twint: 'TWINT', paypal: 'PayPal',
+    // The in-store wallets are requested under a _pos code and come back under one,
+    // so the plain spellings above would never have matched them.
+    wechatpay_pos: 'WeChat Pay', duitnow_pos: 'DuitNow', paynow_pos: 'PayNow',
   };
   return map[brand?.toLowerCase()] || brand;
 }
@@ -1179,11 +1182,17 @@ async function selectTerminal(poiId) {
       body: JSON.stringify({ poiId })
     });
     const data = await res.json();
-    if (res.ok) {
-      state.config.terminals = data.terminals;
-      renderTerminals();
-      showToast(`Active: ${poiId}`, 'success');
+    // A refusal used to be dropped on the floor. The menu had already closed on the
+    // press, so the terminal simply stayed as it was with nothing said -- which is
+    // indistinguishable from a press that missed, and this picker is driven by hand
+    // on a touchscreen where presses do miss. The two need to look different.
+    if (!res.ok) {
+      showToast(data.error || `Could not switch to ${poiId}`, 'error');
+      return;
     }
+    state.config.terminals = data.terminals;
+    renderTerminals();
+    showToast(`Active: ${poiId}`, 'success');
   } catch (err) {
     showToast(`Select failed: ${err.message}`, 'error');
   }
@@ -1197,11 +1206,13 @@ async function deleteTerminal(poiId) {
       body: JSON.stringify({ poiId })
     });
     const data = await res.json();
-    if (res.ok) {
-      state.config.terminals = data.terminals;
-      renderTerminals();
-      showToast(`Removed ${poiId}`, 'info');
+    if (!res.ok) {
+      showToast(data.error || `Could not remove ${poiId}`, 'error');
+      return;
     }
+    state.config.terminals = data.terminals;
+    renderTerminals();
+    showToast(`Removed ${poiId}`, 'info');
   } catch (err) {
     showToast(`Delete failed: ${err.message}`, 'error');
   }

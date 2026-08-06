@@ -307,6 +307,16 @@
           <img src="https://checkoutshopper-live.adyen.com/checkoutshopper/images/logos/paynow_pos.svg" alt="PayNow" />
           <span>PayNow POS</span>
         </button>
+        <button class="paymethod-btn" data-brand="alipay">
+          <img src="https://checkoutshopper-live.adyen.com/checkoutshopper/images/logos/alipay.svg" alt="Alipay" />
+          <span>Alipay</span>
+        </button>
+        <!-- The brand code carries the _pos suffix but the logo file does not have
+             to match it; this is the one Adyen serves for the in-store wallet. -->
+        <button class="paymethod-btn" data-brand="wechatpay_pos">
+          <img src="https://checkoutshopper-live.adyen.com/checkoutshopper/images/logos/wechatpay_pos.svg" alt="WeChat Pay" />
+          <span>WeChat Pay</span>
+        </button>
         <!-- Manual Key Entry: the card number and expiry date are typed on the
              terminal keypad, never in this app. -->
         <button class="paymethod-btn" data-entry-mode="Keyed">
