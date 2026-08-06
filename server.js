@@ -391,17 +391,39 @@ diagnosticsChannel.subscribe('undici:request:create', ({ request }) => {
   if (ctx) tracedRequests.set(request, ctx);
 });
 
+// Which socket a request went out on, and how long it had been sitting unused.
+// Inferring this from the wait alone was a mistake worth not repeating: a low number
+// was read as a healthy connection when it actually meant a pooled one, written into
+// in microseconds because the bytes only reached a local send buffer. Reuse is a
+// fact the socket can be asked for directly, so it is asked.
+const socketHistory = new WeakMap();
+
+diagnosticsChannel.subscribe('undici:client:connected', ({ socket }) => {
+  if (socket) socketHistory.set(socket, { openedAt: Date.now(), lastUsedAt: null });
+});
+
 // The request going out on a socket. Everything before this is ours; everything
 // after it is Adyen's and the terminal's.
-diagnosticsChannel.subscribe('undici:client:sendHeaders', ({ request }) => {
+diagnosticsChannel.subscribe('undici:client:sendHeaders', ({ request, socket }) => {
   const ctx = tracedRequests.get(request);
   if (!ctx) return;
   ctx.sentAt = Date.now();
   const waitedMs = ctx.sentAt - ctx.startedAt;
+
+  // Absent only for a socket that opened before this subscriber did, which cannot
+  // happen for an Adyen call but is not worth guessing about if it ever does.
+  const history = socket ? socketHistory.get(socket) : null;
+  const reused = !!(history && history.lastUsedAt !== null);
+  const idleMs = reused ? ctx.sentAt - history.lastUsedAt : null;
+  if (history) history.lastUsedAt = ctx.sentAt;
+
   // A silent call was never logged, so there is no entry to annotate.
-  if (!ctx.silent) broadcastSSE('apiDispatched', { traceId: ctx.traceId, waitedMs });
+  if (!ctx.silent) {
+    broadcastSSE('apiDispatched', { traceId: ctx.traceId, waitedMs, reused, idleMs });
+  }
   if (TRACE_CONNECTIONS) {
-    console.log(`[trace] ${ctx.label} — ${waitedMs}ms waiting for a connection`);
+    console.log(`[trace] ${ctx.label} — ${waitedMs}ms waiting, `
+      + (reused ? `REUSED a socket idle ${idleMs}ms` : 'on a new connection'));
   }
 });
 

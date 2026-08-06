@@ -276,8 +276,8 @@ function setupSSE() {
   // anything leaves it: undici may still be waiting for a connection. This marks the
   // moment it actually went out, on the entry it belongs to.
   es.addEventListener('apiDispatched', (e) => {
-    const { traceId, waitedMs } = JSON.parse(e.data);
-    markApiDispatched(traceId, waitedMs);
+    const { traceId, waitedMs, reused, idleMs } = JSON.parse(e.data);
+    markApiDispatched(traceId, waitedMs, reused, idleMs);
   });
 
   es.addEventListener('ordersCleared', () => {
@@ -2843,7 +2843,7 @@ const DISPATCH_SLOW_MS = 250;
 // Annotates a logged request with how long it waited to go out. Silent when the
 // entry is gone -- the log is capped, and a stall long enough to matter can outlive
 // its own entry on a busy terminal.
-function markApiDispatched(traceId, waitedMs) {
+function markApiDispatched(traceId, waitedMs, reused, idleMs) {
   if (!traceId) return;
   const entry = $apiResponse.querySelector(`.log-entry[data-trace-id="${CSS.escape(traceId)}"]`);
   if (!entry || entry.querySelector('.log-entry-dispatch')) return;
@@ -2851,10 +2851,19 @@ function markApiDispatched(traceId, waitedMs) {
   const el = document.createElement('span');
   el.className = 'log-entry-dispatch';
   if (waitedMs >= DISPATCH_SLOW_MS) el.classList.add('is-slow');
-  el.textContent = `sent +${waitedMs}ms`;
+
+  // Stated rather than left to be inferred from the wait. Reading a small wait as a
+  // healthy connection is what sent this investigation the wrong way for an
+  // afternoon: it meant the opposite, a socket the pool still believed in.
+  const seconds = idleMs >= 1000 ? `${Math.round(idleMs / 1000)}s` : `${idleMs}ms`;
+  el.textContent = reused ? `sent +${waitedMs}ms · reused ${seconds}` : `sent +${waitedMs}ms · new`;
+  if (reused) el.classList.add('is-reused');
+
   // Spelled out, because the number alone invites the wrong reading: it is the wait
   // inside this process, and says nothing about when Adyen or the terminal acted.
-  el.title = `Waited ${waitedMs}ms for a connection before the request left the server`;
+  el.title = reused
+    ? `Waited ${waitedMs}ms, then went out on a pooled connection that had been idle ${idleMs}ms`
+    : `Waited ${waitedMs}ms for a new connection before the request left the server`;
   entry.querySelector('.log-entry-time')?.before(el);
 }
 

@@ -1387,6 +1387,15 @@ html, body {
   color: var(--warning-ink);
   font-weight: 600;
 }
+/* A request that went out on a pooled socket. Louder than slow, and deliberately so
+   while the stalls are being chased: on this deployment every Adyen call is supposed
+   to open its own connection, so seeing this at all means the request was written
+   into something the pool had kept and the network may well have dropped. Wins over
+   .is-slow by being stated after it. */
+.log-entry-dispatch.is-reused {
+  color: var(--danger-ink);
+  font-weight: 600;
+}
 /* Right-aligned and out of the title, so a long label no longer has to share its
    line with a timestamp that is the same width on every row. */
 .log-entry-time {
